@@ -34,6 +34,9 @@ fi
 # Footgun 4: pick a GPU (default 0; override with GPU_ID env var)
 export CUDA_VISIBLE_DEVICES="${GPU_ID:-0}"
 
+# lab01 L40 local P2P currently makes NCCL collectives hang; keep DDP on SHM/socket.
+export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
+
 device_ids() {
   local device
   for device in "$@"; do
@@ -103,5 +106,6 @@ check_gpus_free() {
   echo "conda env:   ${CONDA_DEFAULT_ENV}"
   echo "python:      $(which python)"
   echo "GPU(s):      ${CUDA_VISIBLE_DEVICES}"
+  echo "NCCL_P2P_DISABLE: ${NCCL_P2P_DISABLE}"
   echo "================================"
 } >&2
