@@ -18,6 +18,7 @@ from einops import rearrange, repeat
 from tensordict import TensorDict
 from tqdm import tqdm
 
+from app.vjepa_wm.profiling import profiler
 from src.utils.logging import grad_logger
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -172,7 +173,9 @@ class VideoWM(nn.Module):
             else:
                 visual = visual.unsqueeze(2).repeat(1, 1, 2, 1, 1)  # b c 2 h w
         if self.enc_type == "dino":  # no duplication needed
+            profiler.start("enc_visual")
             visual_embs = self.encoder(visual)
+            profiler.stop("enc_visual")
             visual_embs = rearrange(
                 visual_embs, "(b t) (h w) d -> b t 1 h w d", b=b, h=self.grid_size, w=self.grid_size
             )
@@ -191,7 +194,9 @@ class VideoWM(nn.Module):
         if self.normalize_reps:
             visual_embs = F.layer_norm(visual_embs, (visual_embs.size(-1),))
         if self.use_proprio and proprio is not None:
+            profiler.start("enc_proprio")
             proprio_emb = self.encode_proprio(proprio)
+            profiler.stop("enc_proprio")
         else:
             proprio_emb = None
         return TensorDict({"visual": visual_embs, "proprio": proprio_emb})
@@ -247,7 +252,9 @@ class VideoWM(nn.Module):
         video_features = encoded_obs["visual"]
         proprio_features = encoded_obs["proprio"]
         if self.use_action:
+            profiler.start("enc_action")
             action_features = self.encode_act(a)
+            profiler.stop("enc_action")
         else:
             action_features = None
         return video_features, proprio_features, action_features

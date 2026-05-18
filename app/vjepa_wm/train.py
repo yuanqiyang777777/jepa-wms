@@ -47,6 +47,7 @@ from app.vjepa_wm.utils import (
     init_video_model,
     load_checkpoint,
 )
+from app.vjepa_wm.profiling import profiler
 from app.vjepa_wm.video_wm import VideoWM
 from evals.main_distributed import launch_evals_with_parsed_args as launch_evals
 from src.datasets.utils.utils import get_dataset_paths
@@ -741,6 +742,7 @@ def main(args, resume_preempt=False):
     def get_batch(train=True, idx=0):
         nonlocal train_loader, val_loader_iters
         if dataset_type == "custom":
+            profiler.start("data_fetch")
             try:
                 if train:
                     obs, action, state, reward = next(train_loader)
@@ -755,11 +757,14 @@ def main(args, resume_preempt=False):
                 else:
                     val_loader_iters[idx] = iter(val_data_iters[idx][2])
                     obs, action, state, reward = next(val_loader_iters[idx])
+            profiler.stop("data_fetch")
+            profiler.start("data_to_device")
             for k in obs.keys():
                 obs[k] = obs[k].to(device, dtype=dtype, non_blocking=True)
             action = action.to(device, dtype=dtype, non_blocking=True)
             state = state.to(device, dtype=dtype, non_blocking=True)
             reward = reward.to(device, dtype=dtype, non_blocking=True)
+            profiler.stop("data_to_device")
             return obs, action, state, reward, None, None
         else:
             try:
@@ -868,6 +873,7 @@ def main(args, resume_preempt=False):
                     with torch.amp.autocast("cuda", dtype=dtype, enabled=mixed_precision):
                         video_features, proprio_features, action_features = world_model.encode(obs, action)
                         if train_predictor and train and predictor is not None:
+                            profiler.start("predictor_fwd")
                             pred_video_features, pred_action_features, pred_proprio_features = (
                                 world_model.forward_pred(
                                     video_features,
@@ -882,6 +888,7 @@ def main(args, resume_preempt=False):
                                 proprio_features,
                                 shift=1,
                             )
+                            profiler.stop("predictor_fwd")
                         else:
                             pred_video_features, pred_proprio_features = None, None
                             predictor_losses = {}
@@ -1003,6 +1010,7 @@ def main(args, resume_preempt=False):
                                     prefixes = list(range(video_features.shape[1] - rollout_steps))
                                 stats = defaultdict(list)
                                 for t in prefixes:
+                                    profiler.start("rollout")
                                     rollout_losses, total_rollout_loss, _, _ = world_model.rollout(
                                         video_features=video_features,
                                         pred_video_features=pred_video_features,
@@ -1018,6 +1026,7 @@ def main(args, resume_preempt=False):
                                         mode="sequential",
                                         t=t,
                                     )
+                                    profiler.stop("rollout")
                                     total_transition_loss += total_rollout_loss
                                     for k in rollout_losses:
                                         stats[k].append(rollout_losses[k])
@@ -1079,10 +1088,14 @@ def main(args, resume_preempt=False):
                                 # If not train_heads, world_model.heads[name].model.module.decoder_embed.weight.grad should be None
                                 grad_stats[name], optim_stats[name] = world_model.heads[name].optimization_step()
                         if train_predictor:
+                            profiler.start("backward")
                             world_model.backward(total_transition_loss)
+                            profiler.stop("backward")
+                            profiler.start("optim")
                             grad_stats["transition_model"], optim_stats["transition_model"] = (
                                 world_model.optimization_step()
                             )
+                            profiler.stop("optim")
                         for key in list(grad_stats.keys()):
                             grad_stats[f"optim/{key}/grad_norm"] = (
                                 grad_stats[key].global_norm if grad_stats[key] is not None else 0.0
@@ -1324,6 +1337,7 @@ def main(args, resume_preempt=False):
                     loss_meter.update(loss)
                     gpu_time_meter.update(gpu_etime_ms)
                     wall_time_meter.update(iter_elapsed_time_ms)
+                    profiler.step_end(iter_elapsed_time_ms)
                     if train_csv_logger is None:  # Initialize the logger once
                         train_csv_logger = create_csv_logger(losses, total_stats, train=True)
                 else:
