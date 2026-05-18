@@ -3,6 +3,7 @@
 # Licensed under the MIT License
 import os
 import warnings
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -13,12 +14,22 @@ warnings.filterwarnings("ignore", message="xFormers is not available")
 torch.hub._validate_not_a_forked_repo = lambda a, b, c: True
 
 
+def load_dinov2_model(name):
+    hub_dir = Path(torch.hub.get_dir())
+    local_candidates = [hub_dir / "facebookresearch_dinov2_main"]
+    local_candidates.extend(sorted(hub_dir.glob("facebookresearch_dinov2_*")))
+    for candidate in local_candidates:
+        if candidate.exists():
+            return torch.hub.load(str(candidate), name, source="local")
+    return torch.hub.load("facebookresearch/dinov2", name)
+
+
 class DinoEncoder(nn.Module):
     def __init__(self, name, feature_key, causal_enc=False):
         super().__init__()
         self.name = name
         if self.name.startswith("dinov2"):
-            self.base_model = torch.hub.load("facebookresearch/dinov2", name)
+            self.base_model = load_dinov2_model(name)
         elif self.name.startswith("dinov3"):
             pretrained_ckpt_root = os.environ.get("JEPAWM_OSSCKPT")
             dinov3_path = os.path.join(os.environ.get("JEPAWM_HOME", os.path.expanduser("~")), "dinov3")

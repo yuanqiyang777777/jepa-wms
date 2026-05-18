@@ -17,8 +17,24 @@ BATCH_SIZE="${BATCH_SIZE:-32}"
 PROFILE_WARMUP="${PROFILE_WARMUP:-20}"
 PROFILE_STEPS="${PROFILE_STEPS:-200}"
 PROFILE_IPE="${PROFILE_IPE:-240}"
+PROFILE_CASE_CLEANUP_TIMEOUT_SEC="${PROFILE_CASE_CLEANUP_TIMEOUT_SEC:-180}"
 
 PROFILE_STEP_SCRIPT="$(dirname "$0")/profile_step.sh"
+
+wait_for_case_gpus() {
+  local devices="$1"
+  local deadline=$((SECONDS + PROFILE_CASE_CLEANUP_TIMEOUT_SEC))
+  while true; do
+    if check_gpus_free "$devices" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "WARNING: GPUs for case did not become fully free before timeout: $devices" >&2
+      return 0
+    fi
+    sleep 5
+  done
+}
 
 run_case() {
   local name="$1"
@@ -72,6 +88,7 @@ run_case() {
   elif [ "$cmd_status" -ne 0 ]; then
     echo "WARNING: $run_id exited with status $cmd_status after writing a profiler table" >&2
   fi
+  wait_for_case_gpus "$devices"
 }
 
 run_scaling_cases() {
