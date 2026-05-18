@@ -8,6 +8,10 @@
 #   RUN_PREFIX=20260518_ddp_scaling MODE=scaling bash experiments/scripts/profile_ddp_matrix.sh
 #   RUN_PREFIX=20260518_ddp_knobs   MODE=ddp     bash experiments/scripts/profile_ddp_matrix.sh
 #   RUN_PREFIX=20260518_ddp_all     MODE=all     bash experiments/scripts/profile_ddp_matrix.sh
+#   RUN_PREFIX=20260518_ddp_ab      MODE=ab      bash experiments/scripts/profile_ddp_matrix.sh
+#
+# MODE=ab interleaves baseline vs +bf16-comm-hook over AB_ROUNDS rounds so both
+# arms see the same average shared-machine contention; only the comm hook differs.
 
 source "$(dirname "$0")/_common.sh"
 
@@ -18,6 +22,7 @@ PROFILE_WARMUP="${PROFILE_WARMUP:-20}"
 PROFILE_STEPS="${PROFILE_STEPS:-200}"
 PROFILE_IPE="${PROFILE_IPE:-240}"
 PROFILE_CASE_CLEANUP_TIMEOUT_SEC="${PROFILE_CASE_CLEANUP_TIMEOUT_SEC:-180}"
+AB_ROUNDS="${AB_ROUNDS:-4}"
 
 PROFILE_STEP_SCRIPT="$(dirname "$0")/profile_step.sh"
 
@@ -111,6 +116,18 @@ run_ddp_knob_cases() {
   fi
 }
 
+run_ab_cases() {
+  # Interleave A and B so both arms see the same average machine contention;
+  # only the comm hook differs (A = baseline DDP, B = + bf16 grad-compress hook).
+  local devices="${DDP_DEVICES:-cuda:0 cuda:1 cuda:2 cuda:3 cuda:4 cuda:5}"
+  local r
+  run_case "1gpu_baseline" "cuda:0" "0" "0" "1" "" "none" ""
+  for r in $(seq 1 "$AB_ROUNDS"); do
+    run_case "r${r}_B_bf16hook" "$devices" "0" "0" "1" "" "bf16" ""
+    run_case "r${r}_A_baseline" "$devices" "0" "0" "1" "" "none" ""
+  done
+}
+
 case "$MODE" in
   scaling)
     run_scaling_cases
@@ -118,12 +135,15 @@ case "$MODE" in
   ddp)
     run_ddp_knob_cases
     ;;
+  ab)
+    run_ab_cases
+    ;;
   all)
     run_scaling_cases
     run_ddp_knob_cases
     ;;
   *)
-    echo "ERROR: MODE must be scaling, ddp, or all (got $MODE)" >&2
+    echo "ERROR: MODE must be scaling, ddp, ab, or all (got $MODE)" >&2
     exit 2
     ;;
 esac
