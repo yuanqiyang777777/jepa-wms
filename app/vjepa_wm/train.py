@@ -28,7 +28,6 @@ import torch
 import torch.multiprocessing as mp
 import wandb
 from einops import rearrange
-from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
 from app.plan_common.datasets.preprocessor import Preprocessor
@@ -47,6 +46,7 @@ from app.vjepa_wm.utils import (
     init_video_model,
     load_checkpoint,
 )
+from app.vjepa_wm.ddp_config import ddp_config_from_env, wrap_ddp_module
 from app.vjepa_wm.profiling import profiler
 from app.vjepa_wm.video_wm import VideoWM
 from evals.main_distributed import launch_evals_with_parsed_args as launch_evals
@@ -641,16 +641,19 @@ def main(args, resume_preempt=False):
                 del checkpoint
 
     # DDP wrapping after loading state_dicts
+    ddp_config = ddp_config_from_env()
+    if rank == 0:
+        logger.info(f"DDP config: {ddp_config.summary()}")
     if not freeze_encoder:
-        encoder = DDP(encoder, static_graph=False, find_unused_parameters=False)
+        encoder = wrap_ddp_module(encoder, ddp_config)
     if train_predictor:
         if action_encoder is not None:
-            action_encoder = DDP(action_encoder, static_graph=False, find_unused_parameters=False)
+            action_encoder = wrap_ddp_module(action_encoder, ddp_config)
         if proprio_encoder is not None:
-            proprio_encoder = DDP(proprio_encoder, static_graph=False, find_unused_parameters=False)
-        predictor = DDP(predictor, static_graph=False, find_unused_parameters=False)
+            proprio_encoder = wrap_ddp_module(proprio_encoder, ddp_config)
+        predictor = wrap_ddp_module(predictor, ddp_config)
     for name in heads.keys():
-        heads[name].model = DDP(heads[name].model, static_graph=False, find_unused_parameters=False)
+        heads[name].model = wrap_ddp_module(heads[name].model, ddp_config)
 
     # Prepare VideoWM kwargs from config
     wm_kwargs = {
