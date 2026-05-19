@@ -388,6 +388,7 @@ class VideoWM(nn.Module):
         num_views=1,
         reduce_mean=True,
         prev_video_features=None,
+        use_mfl=True,
     ):
         """
         Input:
@@ -415,29 +416,36 @@ class VideoWM(nn.Module):
                 proprio_targets_ = proprio_features
                 proprio_features_ = pred_proprio_features
         loss = 0.0
+        visual_targets_loss = visual_targets_.detach()
         visual_cos_loss = -(
             visual_features_
-            * visual_targets_
-            / (visual_features_.norm(dim=-1, keepdim=True) * visual_targets_.norm(dim=-1, keepdim=True))
+            * visual_targets_loss
+            / (visual_features_.norm(dim=-1, keepdim=True) * visual_targets_loss.norm(dim=-1, keepdim=True))
         ).sum(-1)
-        visual_l1_loss = l1_(visual_features_, visual_targets_).mean(dim=-1)
-        visual_l2_loss = l2_(visual_features_, visual_targets_).mean(dim=-1)
-        visual_smooth_l1_loss = smooth_l1_(visual_features_, visual_targets_).mean(dim=-1)
+        visual_l1_loss = l1_(visual_features_, visual_targets_loss).mean(dim=-1)
+        visual_l2_loss = l2_(visual_features_, visual_targets_loss).mean(dim=-1)
+        visual_smooth_l1_loss = smooth_l1_(visual_features_, visual_targets_loss).mean(dim=-1)
         if proprio_loss:
+            proprio_targets_loss = proprio_targets_.detach()
             proprio_cos_loss = -(
                 proprio_features_
-                * proprio_targets_
-                / (proprio_features_.norm(dim=-1, keepdim=True) * proprio_targets_.norm(dim=-1, keepdim=True))
+                * proprio_targets_loss
+                / (proprio_features_.norm(dim=-1, keepdim=True) * proprio_targets_loss.norm(dim=-1, keepdim=True))
             ).sum(-1)
-            proprio_l1_loss = l1_(proprio_features_, proprio_targets_).mean(dim=-1)
-            proprio_l2_loss = l2_(proprio_features_, proprio_targets_).mean(dim=-1)
-            proprio_smooth_l1_loss = smooth_l1_(proprio_features_, proprio_targets_).mean(dim=-1)
+            proprio_l1_loss = l1_(proprio_features_, proprio_targets_loss).mean(dim=-1)
+            proprio_l2_loss = l2_(proprio_features_, proprio_targets_loss).mean(dim=-1)
+            proprio_smooth_l1_loss = smooth_l1_(proprio_features_, proprio_targets_loss).mean(dim=-1)
         # Motion-Focal Loss: re-weight per-patch visual L2 by target-side latent motion.
         # mfl_eta absent or 0 -> block skipped -> bit-exact baseline (design invariant).
         mfl_eta = float(self.cfgs_loss.get("mfl_eta", 0.0))
         visual_l2_loss_weighted = visual_l2_loss
-        if visual_loss and mfl_eta > 0.0:
+        mfl_requested = visual_loss and use_mfl and "mfl_eta" in self.cfgs_loss and mfl_eta != 0.0
+        if mfl_requested and not 0.0 <= mfl_eta <= 1.0:
+            raise ValueError(f"mfl_eta must be in [0, 1], got {mfl_eta}")
+        if visual_loss and use_mfl and mfl_eta > 0.0:
             mfl_gamma = float(self.cfgs_loss.get("mfl_gamma", 1.0))
+            if mfl_gamma <= 0.0:
+                raise ValueError(f"mfl_gamma must be > 0, got {mfl_gamma}")
             mfl_eps = float(self.cfgs_loss.get("mfl_eps", 1.0e-6))
             if shift != 0:
                 prev_targets_ = video_features[:, shift - 1 : -1]
@@ -493,6 +501,7 @@ class VideoWM(nn.Module):
         rollout_stop_gradient=True,
         ctxt_window=8,
         debug=False,
+        use_mfl=True,
         # Mode selection
         mode="sequential",  # 'sequential' or 'parallel'
         t=None,  # For sequential mode: timestep at which to cut between prefix and suffix
@@ -691,7 +700,14 @@ class VideoWM(nn.Module):
                     if self.use_proprio and proprio_features is not None
                     else None
                 )
-                losses = self.compute_loss(next_vid_feats, next_prop_feats, vid_targets, prop_targets, shift=0)
+                losses = self.compute_loss(
+                    next_vid_feats,
+                    next_prop_feats,
+                    vid_targets,
+                    prop_targets,
+                    shift=0,
+                    use_mfl=use_mfl,
+                )
             else:
                 if vid_feats_suffix is not None:
                     vid_targets = vid_feats_suffix[:, h : h + 1].detach()
@@ -700,7 +716,10 @@ class VideoWM(nn.Module):
                         if self.use_proprio and prop_feats_suffix is not None
                         else None
                     )
-                    prev_vid_targets = video_features[:, t + 1 + h : t + 2 + h].detach()
+                    if pred_video_features is not None:
+                        prev_vid_targets = video_features[:, t + 1 + h : t + 2 + h].detach()
+                    else:
+                        prev_vid_targets = video_features[:, t + h : t + 1 + h].detach()
                     losses = self.compute_loss(
                         next_vid_feat,
                         next_prop_feat,
@@ -708,6 +727,7 @@ class VideoWM(nn.Module):
                         prop_targets,
                         shift=0,
                         prev_video_features=prev_vid_targets,
+                        use_mfl=use_mfl,
                     )
                 else:
                     losses = None
@@ -890,6 +910,7 @@ class VideoWM(nn.Module):
                     t=ctxt_idx,
                     rollout_steps=rollout_steps,
                     ctxt_window=ctxt_window,
+                    use_mfl=False,
                 )
                 costs = self.compute_loss(
                     final_vid_feats[:, -1:],
@@ -898,6 +919,7 @@ class VideoWM(nn.Module):
                     goal_prop_feat,
                     shift=0,
                     reduce_mean=False,
+                    use_mfl=False,
                 )["loss"]
                 costs = costs.mean(dim=tuple(range(1, costs.ndim)))
                 for ib in range(proc_B):

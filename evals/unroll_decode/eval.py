@@ -297,6 +297,7 @@ def main(args_eval, resume_preempt=False):
                 gt_proprio_h,
                 shift=0,
                 reduce_mean=True,
+                use_mfl=False,
             )
             noisy_pred_proprio_h = (
                 predicted_noise_encs_proprio.transpose(1, 0)[:, h : h + 1]
@@ -310,6 +311,7 @@ def main(args_eval, resume_preempt=False):
                 gt_proprio_h,
                 shift=0,
                 reduce_mean=True,
+                use_mfl=False,
             )
             for k, v in losses.items():
                 val_rollout_result[f"val_rollout/{k}/{h}"] = v.detach().cpu().item()

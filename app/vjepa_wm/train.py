@@ -1161,6 +1161,7 @@ def main(args, resume_preempt=False):
                                             ctxt_window=ctxt_window,
                                             mode="sequential",
                                             t=t,
+                                            use_mfl=False,
                                         )
                                         # last_vid_feats: [B T V H W D]
                                         for k in rollout_losses:
