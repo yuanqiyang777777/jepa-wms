@@ -19,6 +19,7 @@ from tensordict import TensorDict
 from tqdm import tqdm
 
 from app.vjepa_wm.profiling import profiler
+from src.losses.mfl import motion_focal_weight
 from src.utils.logging import grad_logger
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -386,6 +387,7 @@ class VideoWM(nn.Module):
         shift=1,
         num_views=1,
         reduce_mean=True,
+        prev_video_features=None,
     ):
         """
         Input:
@@ -430,11 +432,29 @@ class VideoWM(nn.Module):
             proprio_l1_loss = l1_(proprio_features_, proprio_targets_).mean(dim=-1)
             proprio_l2_loss = l2_(proprio_features_, proprio_targets_).mean(dim=-1)
             proprio_smooth_l1_loss = smooth_l1_(proprio_features_, proprio_targets_).mean(dim=-1)
+        # Motion-Focal Loss: re-weight per-patch visual L2 by target-side latent motion.
+        # mfl_eta absent or 0 -> block skipped -> bit-exact baseline (design invariant).
+        mfl_eta = float(self.cfgs_loss.get("mfl_eta", 0.0))
+        visual_l2_loss_weighted = visual_l2_loss
+        if visual_loss and mfl_eta > 0.0:
+            mfl_gamma = float(self.cfgs_loss.get("mfl_gamma", 1.0))
+            mfl_eps = float(self.cfgs_loss.get("mfl_eps", 1.0e-6))
+            if shift != 0:
+                prev_targets_ = video_features[:, shift - 1 : -1]
+            else:
+                assert prev_video_features is not None, (
+                    "MFL (mfl_eta > 0) requires prev_video_features when shift=0"
+                )
+                prev_targets_ = prev_video_features.reshape(B, -1, V * H * W, C)
+            mfl_w = motion_focal_weight(
+                visual_targets_, prev_targets_, mfl_eta, mfl_gamma, mfl_eps
+            ).to(visual_l2_loss.dtype)
+            visual_l2_loss_weighted = visual_l2_loss * mfl_w
         # Combine losses
         if visual_loss:
             loss += self.cfgs_loss["cos_loss_weight"] * visual_cos_loss
             loss += self.cfgs_loss["l1_loss_weight"] * visual_l1_loss
-            loss += self.cfgs_loss["l2_loss_weight"] * visual_l2_loss
+            loss += self.cfgs_loss["l2_loss_weight"] * visual_l2_loss_weighted
             loss += self.cfgs_loss["smooth_l1_loss_weight"] * visual_smooth_l1_loss
         if proprio_loss:
             loss += self.cfgs_loss["cos_loss_weight"] * proprio_cos_loss
@@ -680,7 +700,15 @@ class VideoWM(nn.Module):
                         if self.use_proprio and prop_feats_suffix is not None
                         else None
                     )
-                    losses = self.compute_loss(next_vid_feat, next_prop_feat, vid_targets, prop_targets, shift=0)
+                    prev_vid_targets = video_features[:, t + 1 + h : t + 2 + h].detach()
+                    losses = self.compute_loss(
+                        next_vid_feat,
+                        next_prop_feat,
+                        vid_targets,
+                        prop_targets,
+                        shift=0,
+                        prev_video_features=prev_vid_targets,
+                    )
                 else:
                     losses = None
 
