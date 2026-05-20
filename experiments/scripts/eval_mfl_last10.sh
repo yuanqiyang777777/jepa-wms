@@ -180,11 +180,10 @@ declare -a PID_EPOCHS=()
 for i in "${!EPOCH_ARRAY[@]}"; do
   epoch="${EPOCH_ARRAY[$i]}"
   device="${DEVICE_ARRAY[$((i % WORLD_SIZE))]}"
-  device_id="${device#cuda:}"
   cfg="$EVAL_ROOT/configs/eval_e${epoch}.yaml"
   log="$EVAL_ROOT/logs/eval_e${epoch}.log"
   echo "Launching eval epoch=$epoch device=$device cfg=$cfg" >&2
-  CUDA_VISIBLE_DEVICES="$device_id" python -m evals.main --fname "$cfg" --devices cuda:0 > "$log" 2>&1 &
+  python -m evals.main --fname "$cfg" --devices "$device" > "$log" 2>&1 &
   PIDS+=("$!")
   PID_EPOCHS+=("$epoch")
 
