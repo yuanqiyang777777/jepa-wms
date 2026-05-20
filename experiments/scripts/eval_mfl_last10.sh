@@ -184,28 +184,36 @@ for i in "${!EPOCH_ARRAY[@]}"; do
   cfg="$EVAL_ROOT/configs/eval_e${epoch}.yaml"
   log="$EVAL_ROOT/logs/eval_e${epoch}.log"
   echo "Launching eval epoch=$epoch device=$device cfg=$cfg" >&2
-  CUDA_VISIBLE_DEVICES="$device_id" python -m evals.main --fname "$cfg" --debug > "$log" 2>&1 &
+  CUDA_VISIBLE_DEVICES="$device_id" python -m evals.main --fname "$cfg" --devices cuda:0 > "$log" 2>&1 &
   PIDS+=("$!")
   PID_EPOCHS+=("$epoch")
 
   if [ "${#PIDS[@]}" -ge "$WORLD_SIZE" ]; then
+    batch_status=0
     for j in "${!PIDS[@]}"; do
       if ! wait "${PIDS[$j]}"; then
         echo "ERROR: eval for epoch ${PID_EPOCHS[$j]} failed; see $EVAL_ROOT/logs/eval_e${PID_EPOCHS[$j]}.log" >&2
-        exit 1
+        batch_status=1
       fi
     done
     PIDS=()
     PID_EPOCHS=()
+    if [ "$batch_status" -ne 0 ]; then
+      exit 1
+    fi
   fi
 done
 
+final_status=0
 for j in "${!PIDS[@]}"; do
   if ! wait "${PIDS[$j]}"; then
     echo "ERROR: eval for epoch ${PID_EPOCHS[$j]} failed; see $EVAL_ROOT/logs/eval_e${PID_EPOCHS[$j]}.log" >&2
-    exit 1
+    final_status=1
   fi
 done
+if [ "$final_status" -ne 0 ]; then
+  exit 1
+fi
 
 python - "$EVAL_ROOT" "${EPOCH_ARRAY[@]}" <<'PY'
 import csv
