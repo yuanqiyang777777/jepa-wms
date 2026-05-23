@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # All rights reserved.
-"""Offline CSA-MPC diagnostics 0-4 (memo sas_mpc_research_memo_zh.tex section 6).
+"""Offline CSA-MPC diagnostics 0-5 (memo sas_mpc_research_memo_zh.tex section 6).
 
 This module consumes the per-episode ``.pt`` dumps written by
 ``DiagnosticRecorder`` during instrumented vanilla CEM/MPC eval, runs the
@@ -14,6 +14,12 @@ This module consumes the per-episode ``.pt`` dumps written by
 * Diagnostic 3-H1 -- four-bin ``(U_state hi/lo) x (U_SA hi/lo)`` matrix.
 * Diagnostic 4  -- false-negative rate (support low but rollout error high) as a
                    function of imagined-rollout depth.
+* Diagnostic 5  -- full 4-quadrant distribution of CEM top-K candidate
+                   trajectories, indexed by (CEM iter x rank x depth x outcome).
+                   Tests H5: failed episodes + later CEM iterations concentrate
+                   more probability mass in (state-familiar, action-unsupported)
+                   than successful episodes + early iterations. Requires the
+                   ``topk_iters_*`` fields in the dump (schema v2).
 
 Everything runs offline, so the support memory, k, beta and every diagnostic
 threshold can be re-tuned without re-running eval.
@@ -166,12 +172,23 @@ def analyze(
     diag2 = _diagnostic_2(records)
     diag3 = _diagnostic_3(records, state_familiar_quantile)
     diag4 = _diagnostic_4(records)
+    diag5 = _diagnostic_5(
+        dumps,
+        memory,
+        state_k=state_k,
+        action_k=action_k,
+        beta=beta,
+        chunk_size=chunk_size,
+        state_familiar_quantile=state_familiar_quantile,
+        action_unsupported_quantile=action_unsupported_quantile,
+    )
 
     report["diagnostic_0_failure_mode"] = diag0
     report["diagnostic_1_exploitation_gap"] = diag1
     report["diagnostic_2_conditioned_correlation"] = diag2
     report["diagnostic_3_buckets"] = diag3
     report["diagnostic_4_false_negative_by_depth"] = diag4
+    report["diagnostic_5_topk_cem_quadrants"] = diag5
     report["go_no_go"] = _go_no_go(diag0, diag1, diag2, diag3, gate_min_ratio)
     return report
 
@@ -427,6 +444,209 @@ def _diagnostic_4(
 
 
 # --------------------------------------------------------------------------
+# Diagnostic 5 -- full 4-quadrant distribution of CEM top-K candidates.
+# --------------------------------------------------------------------------
+
+def _diagnostic_5(
+    dumps: List[Dict[str, Any]],
+    memory: SupportMemory,
+    *,
+    state_k: int = 64,
+    action_k: int = 64,
+    beta: float = 1.0,
+    chunk_size: int = 8192,
+    state_familiar_quantile: float = 0.50,
+    action_unsupported_quantile: float = 0.75,
+    iter_buckets: int = 3,
+) -> Dict[str, Any]:
+    """Joint distribution of CEM top-K candidate trajectories across the 2x2
+    (U_state low/high, U_action|x low/high) grid, sliced by CEM iteration, rank,
+    rollout depth, and episode outcome.
+
+    H5: failed episodes + later CEM iterations carry more probability mass in
+    the (state-familiar, action-unsupported) quadrant than successes + early
+    iterations. This is the planner-exploitation-of-poor-support signal.
+
+    Requires dumps written with schema v2 (``topk_iters_*`` present).
+    """
+    # Collect every (episode, replan, iter, rank, depth) candidate query.
+    states: List[torch.Tensor] = []
+    actions: List[torch.Tensor] = []
+    meta: List[Dict[str, Any]] = []
+
+    have_any = False
+    for dump in dumps:
+        episode = int(dump.get("episode_id", -1))
+        episode_success = int(dump.get("episode_success", 0))
+        for step in dump.get("steps", []):
+            iters_actions = step.get("topk_iters_actions") or []
+            iters_states = step.get("topk_iters_states") or []
+            decision_state = step.get("decision_state")
+            if not iters_actions or not iters_states:
+                continue
+            have_any = True
+            n_iters = min(len(iters_actions), len(iters_states))
+            for it in range(n_iters):
+                a_iter = iters_actions[it]   # [plan_length, K, A]
+                s_iter = iters_states[it]    # [plan_length, K, D_state]
+                if a_iter.ndim != 3 or s_iter.ndim != 3:
+                    continue
+                plan_length, K, _ = a_iter.shape
+                # Depth 0 is the strictly-reliable real-obs query, shared
+                # across candidates (each candidate just chooses action[0]).
+                if decision_state is not None:
+                    for k in range(K):
+                        states.append(decision_state.reshape(-1))
+                        actions.append(a_iter[0, k].reshape(-1))
+                        meta.append({
+                            "episode": episode,
+                            "episode_success": episode_success,
+                            "replan_idx": int(step["replan_idx"]),
+                            "iter": it,
+                            "rank": k,
+                            "depth": 0,
+                            "step_success": int(step.get("step_success", 0)),
+                        })
+                # Depths 1..plan_length-1 use candidate's imagined state at d-1
+                # paired with the candidate's action at d.
+                for d in range(1, plan_length):
+                    for k in range(K):
+                        states.append(s_iter[d - 1, k].reshape(-1))
+                        actions.append(a_iter[d, k].reshape(-1))
+                        meta.append({
+                            "episode": episode,
+                            "episode_success": episode_success,
+                            "replan_idx": int(step["replan_idx"]),
+                            "iter": it,
+                            "rank": k,
+                            "depth": d,
+                            "step_success": int(step.get("step_success", 0)),
+                        })
+
+    if not have_any or not meta:
+        return {"status": "not_computed", "reason": "no schema-v2 dumps with topk_iters_* fields"}
+
+    # Score all queries against M_real (one big batched kNN).
+    scorer = ConditionalSupportScorer(
+        memory=memory, state_k=state_k, action_k=action_k, beta=beta, chunk_size=chunk_size
+    )
+    scores = scorer.score(torch.stack(states), torch.stack(actions), raw_state=True)
+    state_score = scores["state_score"].detach().cpu()
+    action_score = scores["action_score"].detach().cpu()
+
+    # Quadrant assignment using the SAME thresholds as diag-0 primary (so the
+    # H5 verdict is comparable to the selected-plan failure-mode census).
+    state_thr = float(torch.quantile(state_score, state_familiar_quantile).item())
+    action_thr = float(torch.quantile(action_score, action_unsupported_quantile).item())
+    state_familiar = state_score <= state_thr  # "familiar" = low U_state
+    action_unsupported = action_score >= action_thr
+
+    # The "key" quadrant for H5: state-familiar AND action-unsupported.
+    quadrant_idx = state_familiar.long() * 2 + action_unsupported.long()
+    # 0 = unfamiliar_supported, 1 = unfamiliar_unsupported,
+    # 2 = familiar_supported,   3 = familiar_unsupported (KEY)
+
+    n_iters_total = max(m["iter"] for m in meta) + 1
+    iter_bucket_size = max(1, int((n_iters_total + iter_buckets - 1) // iter_buckets))
+    max_depth = max(m["depth"] for m in meta)
+    max_rank = max(m["rank"] for m in meta)
+
+    def _bucket_iter(i: int) -> str:
+        b = min(iter_buckets - 1, i // iter_bucket_size)
+        return f"iter_b{b}"
+
+    # Build counts per slice.
+    def _quadrant_counts(mask: torch.Tensor) -> Dict[str, Any]:
+        if not bool(mask.any()):
+            return {"count": 0}
+        counts = torch.zeros(4, dtype=torch.long)
+        for q in range(4):
+            counts[q] = ((quadrant_idx == q) & mask).sum()
+        total = int(counts.sum().item())
+        if total == 0:
+            return {"count": 0}
+        probs = (counts.float() / total).tolist()
+        return {
+            "count": total,
+            "p_unfamiliar_supported": probs[0],
+            "p_unfamiliar_unsupported": probs[1],
+            "p_familiar_supported": probs[2],
+            "p_familiar_unsupported": probs[3],  # KEY quadrant
+        }
+
+    succ = torch.tensor([m["episode_success"] for m in meta]).bool()
+    iter_idx = torch.tensor([m["iter"] for m in meta])
+    rank_idx = torch.tensor([m["rank"] for m in meta])
+    depth_idx = torch.tensor([m["depth"] for m in meta])
+
+    by_outcome = {
+        "success": _quadrant_counts(succ),
+        "failure": _quadrant_counts(~succ),
+    }
+    by_iter = {}
+    by_iter_outcome = {}
+    for b in range(iter_buckets):
+        lo = b * iter_bucket_size
+        hi = min(n_iters_total, lo + iter_bucket_size)
+        mask = (iter_idx >= lo) & (iter_idx < hi)
+        by_iter[f"b{b}_iters_{lo}_{hi - 1}"] = _quadrant_counts(mask)
+        by_iter_outcome[f"b{b}_iters_{lo}_{hi - 1}_success"] = _quadrant_counts(mask & succ)
+        by_iter_outcome[f"b{b}_iters_{lo}_{hi - 1}_failure"] = _quadrant_counts(mask & ~succ)
+
+    by_rank = {f"rank_{k}": _quadrant_counts(rank_idx == k) for k in range(min(max_rank + 1, 10))}
+
+    by_depth = {f"depth_{d}": _quadrant_counts(depth_idx == d) for d in range(max_depth + 1)}
+
+    # H5 monotonicity probes.
+    def _p_key(slice_counts: Dict[str, Any]) -> float | None:
+        return slice_counts.get("p_familiar_unsupported")
+
+    iter_keys_sorted = sorted(by_iter.keys())
+    p_key_by_iter = [_p_key(by_iter[k]) for k in iter_keys_sorted]
+    monotone_iter = (
+        all(p is not None for p in p_key_by_iter)
+        and all(p_key_by_iter[i] <= p_key_by_iter[i + 1] for i in range(len(p_key_by_iter) - 1))
+    )
+
+    depth_keys_sorted = sorted(by_depth.keys(), key=lambda k: int(k.split("_")[1]))
+    p_key_by_depth = [_p_key(by_depth[k]) for k in depth_keys_sorted]
+    monotone_depth = (
+        all(p is not None for p in p_key_by_depth)
+        and all(p_key_by_depth[i] <= p_key_by_depth[i + 1] for i in range(len(p_key_by_depth) - 1))
+    )
+
+    fail_p_key = _p_key(by_outcome["failure"])
+    succ_p_key = _p_key(by_outcome["success"])
+    failure_greater_than_success = (
+        fail_p_key is not None and succ_p_key is not None and fail_p_key > succ_p_key
+    )
+
+    h5_verdict = bool(failure_greater_than_success and monotone_iter and monotone_depth)
+
+    return {
+        "status": "computed",
+        "num_candidate_queries": len(meta),
+        "n_cem_iterations": int(n_iters_total),
+        "iter_bucket_size": iter_bucket_size,
+        "thresholds": {
+            "state_familiar_quantile": state_familiar_quantile,
+            "action_unsupported_quantile": action_unsupported_quantile,
+            "state_threshold": state_thr,
+            "action_threshold": action_thr,
+        },
+        "by_outcome": by_outcome,
+        "by_iter": by_iter,
+        "by_iter_outcome": by_iter_outcome,
+        "by_rank": by_rank,
+        "by_depth": by_depth,
+        "h5_failure_greater_than_success": bool(failure_greater_than_success),
+        "h5_monotone_in_iter": bool(monotone_iter),
+        "h5_monotone_in_depth": bool(monotone_depth),
+        "h5_verdict": h5_verdict,
+    }
+
+
+# --------------------------------------------------------------------------
 # Go / No-Go.
 # --------------------------------------------------------------------------
 
@@ -522,5 +742,6 @@ def _empty_diagnostics(gate_min_ratio: float) -> Dict[str, Any]:
         "diagnostic_2_conditioned_correlation": {"status": "not_computed", "reason": "no scored queries"},
         "diagnostic_3_buckets": {"status": "not_computed", "reason": "no scored queries"},
         "diagnostic_4_false_negative_by_depth": {"status": "not_computed", "reason": "no scored queries"},
+        "diagnostic_5_topk_cem_quadrants": {"status": "not_computed", "reason": "no scored queries"},
         "go_no_go": {"gate_min_ratio": gate_min_ratio, "recommendation": "no-go"},
     }

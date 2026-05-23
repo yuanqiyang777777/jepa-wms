@@ -66,6 +66,7 @@ def make_config(
     quick_debug: bool = False,
     dump_dir: str | None = None,
     seed: int | None = None,
+    topk_candidates: int = 0,
     extra_overrides: dict | None = None,
 ) -> dict:
     defaults = ENV_DEFAULTS[env]
@@ -119,11 +120,14 @@ def make_config(
     if pretrain_dec_path:
         heads_cfg["pretrain_dec_path"] = pretrain_dec_path
 
-    # Only ``enabled`` (and optional ``dump_dir``) are read by the eval hook --
-    # the full diagnostic suite + support memory live offline in analysis.py.
+    # Only ``enabled``, optional ``dump_dir``, and the diag-5 ``topk_candidates``
+    # knob are read by the eval hook -- the full diagnostic suite + support
+    # memory live offline in analysis.py.
     csa_block: dict[str, object] = {"enabled": True}
     if dump_dir is not None:
         csa_block["dump_dir"] = str(dump_dir)
+    if topk_candidates and topk_candidates > 0:
+        csa_block["topk_candidates"] = int(topk_candidates)
     cfg["csa_diagnostics"] = csa_block
 
     if extra_overrides:
@@ -151,6 +155,12 @@ def main() -> None:
     parser.add_argument("--quick-debug", action="store_true", help="Quick-debug mode (1 episode, 2 CEM samples, etc.)")
     parser.add_argument("--dump-dir", default=None, help="Optional override for the per-episode dump root")
     parser.add_argument("--seed", type=int, default=None, help="Optional meta.seed override (use a different seed to fan out disjoint episodes across GPUs).")
+    parser.add_argument(
+        "--topk-candidates",
+        type=int,
+        default=0,
+        help="Diagnostic 5: number of CEM top-K candidates to retain per iteration (0 = off). E.g. --topk-candidates 10.",
+    )
     args = parser.parse_args()
 
     cfg = make_config(
@@ -162,6 +172,7 @@ def main() -> None:
         quick_debug=args.quick_debug,
         dump_dir=args.dump_dir,
         seed=args.seed,
+        topk_candidates=args.topk_candidates,
     )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

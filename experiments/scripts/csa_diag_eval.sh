@@ -52,6 +52,11 @@ if [ -n "${FOLDER:-}" ]; then
   FOLDER_FLAG="--folder ${FOLDER}"
 fi
 
+TOPK_FLAG=""
+if [ -n "${TOPK:-}" ]; then
+  TOPK_FLAG="--topk-candidates ${TOPK}"
+fi
+
 echo ">>> Generating CSA diagnostic config for env=${ENV} -> ${OUT_YAML}"
 # shellcheck disable=SC2086
 python experiments/scripts/csa/make_official_csa_eval_config.py \
@@ -61,7 +66,8 @@ python experiments/scripts/csa/make_official_csa_eval_config.py \
   $QUICK_DEBUG_FLAG \
   $DUMP_DIR_FLAG \
   $SEED_FLAG \
-  $FOLDER_FLAG
+  $FOLDER_FLAG \
+  $TOPK_FLAG
 
 echo ">>> Launching eval on GPU(s) ${CUDA_VISIBLE_DEVICES}"
 # IMPORTANT: do NOT pass --debug here. ``evals/main.py`` with ``--debug``

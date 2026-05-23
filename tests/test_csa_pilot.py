@@ -473,6 +473,143 @@ def test_make_official_csa_eval_config_supports_all_five_phase1_envs(tmp_path):
 # build_support_memory.py CLI.
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# Diagnostic 5 -- CEM top-K candidate 4-quadrant distribution.
+# --------------------------------------------------------------------------
+
+def _make_topk_dump(
+    *,
+    episode_id: int,
+    episode_success: bool,
+    n_steps: int = 1,
+    n_iters: int = 4,
+    K: int = 3,
+    plan_length: int = 4,
+    d_state: int = 8,
+    action_dim: int = 2,
+):
+    """Synthetic dump with topk_iters_* fields populated (schema v2)."""
+    steps = []
+    for step_idx in range(n_steps):
+        topk_iters_actions = []
+        topk_iters_states = []
+        topk_iters_costs = []
+        for _ in range(n_iters):
+            topk_iters_actions.append(torch.randn(plan_length, K, action_dim))
+            topk_iters_states.append(torch.randn(plan_length, K, d_state))
+            topk_iters_costs.append(torch.randn(K).abs())
+        steps.append({
+            "replan_idx": step_idx,
+            "decision_state": torch.randn(d_state),
+            "imagined_states": torch.randn(plan_length, d_state),
+            "real_states": torch.randn(plan_length, d_state),
+            "selected_actions": torch.randn(plan_length, action_dim),
+            "predicted_terminal_cost": 0.5,
+            "real_terminal_cost": 0.7,
+            "state_dist": 1.0,
+            "step_success": int(bool(episode_success and step_idx == n_steps - 1)),
+            "topk_iters_actions": topk_iters_actions,
+            "topk_iters_states": topk_iters_states,
+            "topk_iters_costs": topk_iters_costs,
+        })
+    return {
+        "schema_version": 2,
+        "episode_id": episode_id,
+        "env": "wall",
+        "episode_success": int(bool(episode_success)),
+        "goal_state": torch.randn(d_state),
+        "metadata": {"frameskip": 5, "action_skip": 1},
+        "num_steps": n_steps,
+        "steps": steps,
+    }
+
+
+def test_diagnostic_recorder_round_trips_topk_iters_fields(tmp_path):
+    """Schema v2 fields are dropped onto disk and reloaded intact."""
+    rec = DiagnosticRecorder(episode_id=0, env="wall", metadata={"frameskip": 5, "action_skip": 1})
+    rec.record_step(
+        replan_idx=0,
+        decision_state=torch.randn(8),
+        imagined_states=torch.randn(4, 8),
+        real_states=torch.randn(4, 8),
+        selected_actions=torch.randn(4, 2),
+        predicted_terminal_cost=0.1,
+        real_terminal_cost=0.2,
+        state_dist=0.3,
+        step_success=False,
+        topk_iters_actions=[torch.randn(4, 3, 2) for _ in range(5)],
+        topk_iters_states=[torch.randn(4, 3, 8) for _ in range(5)],
+        topk_iters_costs=[torch.randn(3) for _ in range(5)],
+    )
+    dump_path = tmp_path / DUMP_FILENAME
+    rec.save(dump_path, episode_success=False)
+
+    dumps = load_episode_dumps(tmp_path)
+    assert dumps[0]["schema_version"] == 2
+    step0 = dumps[0]["steps"][0]
+    assert len(step0["topk_iters_actions"]) == 5
+    assert step0["topk_iters_actions"][0].shape == (4, 3, 2)
+    assert step0["topk_iters_states"][0].shape == (4, 3, 8)
+    assert step0["topk_iters_costs"][0].shape == (3,)
+
+
+def test_analyze_runs_diagnostic_5_when_topk_iters_present():
+    torch.manual_seed(3)
+    d_state, action_dim = 8, 2
+    memory = SupportMemory.from_tensors(
+        torch.randn(128, d_state),
+        torch.randn(128, action_dim),
+        pca_dim=4,
+        state_reduction="flatten",
+        metadata={"frameskip": 5, "action_skip": 1, "action_space": "model_normalized"},
+    )
+    dumps = [
+        _make_topk_dump(episode_id=0, episode_success=False, n_iters=6, K=5, plan_length=4, d_state=d_state, action_dim=action_dim),
+        _make_topk_dump(episode_id=1, episode_success=True, n_iters=6, K=5, plan_length=4, d_state=d_state, action_dim=action_dim),
+        _make_topk_dump(episode_id=2, episode_success=False, n_iters=6, K=5, plan_length=4, d_state=d_state, action_dim=action_dim),
+    ]
+
+    report = analyze(dumps, memory, state_k=4, action_k=4, beta=1.0)
+    diag5 = report["diagnostic_5_topk_cem_quadrants"]
+    assert diag5["status"] == "computed"
+    # 3 episodes × 1 step × 6 iters × 5 ranks × 4 depths = 360 candidate queries.
+    assert diag5["num_candidate_queries"] == 3 * 1 * 6 * 5 * 4
+    assert diag5["n_cem_iterations"] == 6
+    assert set(diag5["by_outcome"]["success"].keys()) >= {
+        "count", "p_unfamiliar_supported", "p_unfamiliar_unsupported",
+        "p_familiar_supported", "p_familiar_unsupported",
+    }
+    # By-iter buckets exist + each carries a probability vector that sums to ~1.
+    for slice_key, slice_counts in diag5["by_iter"].items():
+        if slice_counts["count"] == 0:
+            continue
+        probs = [
+            slice_counts["p_unfamiliar_supported"],
+            slice_counts["p_unfamiliar_unsupported"],
+            slice_counts["p_familiar_supported"],
+            slice_counts["p_familiar_unsupported"],
+        ]
+        assert abs(sum(probs) - 1.0) < 1e-5
+
+
+def test_analyze_reports_diag5_not_computed_when_topk_iters_absent():
+    """Old-schema dumps (no topk_iters_*) should produce status='not_computed'
+    for diag 5 without blowing up the rest of the analyze call."""
+    torch.manual_seed(4)
+    d_state, action_dim = 8, 2
+    memory = SupportMemory.from_tensors(
+        torch.randn(64, d_state),
+        torch.randn(64, action_dim),
+        pca_dim=4,
+        state_reduction="flatten",
+        metadata={"frameskip": 5, "action_skip": 1, "action_space": "model_normalized"},
+    )
+    # _make_synthetic_dump already produces a v1-shaped dump (no topk_iters_*).
+    dumps = [_make_synthetic_dump(episode_id=0, env="wall", episode_success=False, d_state=d_state, action_dim=action_dim)]
+    report = analyze(dumps, memory, state_k=4, action_k=4, beta=1.0)
+    assert report["diagnostic_5_topk_cem_quadrants"]["status"] == "not_computed"
+
+
 def test_build_support_memory_random_sampling_is_seeded_and_reproducible(tmp_path):
     states_path = tmp_path / "states.pt"
     actions_path = tmp_path / "actions.pt"

@@ -53,7 +53,7 @@ from typing import Any, Dict, List
 
 import torch
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # v2 adds optional per-step topk_iters_* lists for Diag 5
 DUMP_FILENAME = "csa_diag_dump.pt"
 
 
@@ -91,6 +91,9 @@ class DiagnosticRecorder:
         real_terminal_cost: float,
         state_dist: float,
         step_success: bool,
+        topk_iters_actions: List[torch.Tensor] | None = None,
+        topk_iters_states: List[torch.Tensor] | None = None,
+        topk_iters_costs: List[torch.Tensor] | None = None,
     ) -> None:
         """Store one replan step. All tensors are moved to CPU float32.
 
@@ -100,20 +103,35 @@ class DiagnosticRecorder:
         the pooled latent of what the environment actually produced when the
         selected plan was executed (may be shorter than the imagined rollout if
         the episode terminated mid-chunk).
+
+        The optional ``topk_iters_*`` lists power Diagnostic 5. Each list has
+        length equal to the planner's CEM iteration count. For iter i::
+
+            topk_iters_actions[i]: Tensor [plan_length, K, action_dim]
+            topk_iters_states[i]:  Tensor [plan_length, K, D_state]  -- pooled
+            topk_iters_costs[i]:   Tensor [K]                        -- planner cost
+
+        ``None`` (or empty lists) keeps the step's dump backward-compatible
+        with the older diag-0-through-4 schema.
         """
-        self.steps.append(
-            {
-                "replan_idx": int(replan_idx),
-                "decision_state": _cpu(decision_state),
-                "imagined_states": _cpu(imagined_states),
-                "real_states": _cpu(real_states),
-                "selected_actions": _cpu(selected_actions),
-                "predicted_terminal_cost": _to_float(predicted_terminal_cost),
-                "real_terminal_cost": _to_float(real_terminal_cost),
-                "state_dist": _to_float(state_dist),
-                "step_success": int(bool(step_success)),
-            }
-        )
+        step: Dict[str, Any] = {
+            "replan_idx": int(replan_idx),
+            "decision_state": _cpu(decision_state),
+            "imagined_states": _cpu(imagined_states),
+            "real_states": _cpu(real_states),
+            "selected_actions": _cpu(selected_actions),
+            "predicted_terminal_cost": _to_float(predicted_terminal_cost),
+            "real_terminal_cost": _to_float(real_terminal_cost),
+            "state_dist": _to_float(state_dist),
+            "step_success": int(bool(step_success)),
+        }
+        if topk_iters_actions:
+            step["topk_iters_actions"] = [_cpu(t) for t in topk_iters_actions]
+        if topk_iters_states:
+            step["topk_iters_states"] = [_cpu(t) for t in topk_iters_states]
+        if topk_iters_costs:
+            step["topk_iters_costs"] = [_cpu(t) for t in topk_iters_costs]
+        self.steps.append(step)
 
     def to_dict(self, episode_success: bool) -> Dict[str, Any]:
         return {

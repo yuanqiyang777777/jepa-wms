@@ -52,7 +52,11 @@ class GC_Agent:
         # decision-state latent without re-encoding the observation.
         self._last_z_init = None
         # --------
-        csa_diag_enabled = bool(_cfg_get(_cfg_get(self.cfg, "csa_diagnostics", None), "enabled", False))
+        csa_cfg = _cfg_get(self.cfg, "csa_diagnostics", None)
+        csa_diag_enabled = bool(_cfg_get(csa_cfg, "enabled", False))
+        # Diagnostic 5: number of CEM top-K candidates to retain per iter for
+        # the offline 4-quadrant distribution (U_state, U_action). 0 disables.
+        csa_topk_candidates = int(_cfg_get(csa_cfg, "topk_candidates", 0)) if csa_diag_enabled else 0
         if self.cfg.planner.planner_name == "nevergrad":
             self.planner = NevergradPlanner(
                 unroll=self.model.unroll,
@@ -102,6 +106,9 @@ class GC_Agent:
         # objective value + action chunk so the recorder can dump them.
         if hasattr(self.planner, "record_selected_plan_cost"):
             self.planner.record_selected_plan_cost = csa_diag_enabled
+        # Diagnostic 5 top-K candidate capture (only meaningful on the CEM planner).
+        if hasattr(self.planner, "record_topk_candidates"):
+            self.planner.record_topk_candidates = csa_topk_candidates
 
     @torch.no_grad()
     def set_goal(self, goal_state):

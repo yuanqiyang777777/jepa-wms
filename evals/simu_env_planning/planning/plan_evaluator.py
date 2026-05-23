@@ -355,6 +355,11 @@ class PlanEvaluator:
             else:
                 predicted_terminal_cost = float("nan")
 
+            # Diagnostic 5 top-K data is captured by the CEM planner per-iter
+            # and stashed in plan_info. Already CPU-resident from the planner.
+            topk_iters_actions = plan_info.get("topk_iters_actions") or []
+            topk_iters_states = plan_info.get("topk_iters_states") or []
+            topk_iters_costs = plan_info.get("topk_iters_costs") or []
             self._csa_step_pending.append(
                 {
                     "replan_idx": int(replan_idx),
@@ -365,6 +370,9 @@ class PlanEvaluator:
                     "n_real_obs": int(n_real_obs),
                     "step_success": bool(success),
                     "state_dist": float(state_dist) if state_dist is not None else float("nan"),
+                    "topk_iters_actions": topk_iters_actions,
+                    "topk_iters_states": topk_iters_states,
+                    "topk_iters_costs": topk_iters_costs,
                 }
             )
         except Exception as exc:
@@ -438,6 +446,9 @@ class PlanEvaluator:
                     real_terminal_cost=real_terminal_cost,
                     state_dist=step["state_dist"],
                     step_success=step["step_success"],
+                    topk_iters_actions=step.get("topk_iters_actions") or None,
+                    topk_iters_states=step.get("topk_iters_states") or None,
+                    topk_iters_costs=step.get("topk_iters_costs") or None,
                 )
                 cum += n
 

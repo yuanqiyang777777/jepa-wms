@@ -33,6 +33,41 @@ class PlanningResult(NamedTuple):
     predicted_best_encs_over_iterations: List = None
 
 
+def _pool_topk_imagined(predicted_encs, topk_idxs, plan_length):
+    """Slice the top-K candidates from a CEM unroll output and pool to
+    [plan_length, K, D_state] for the diagnostic-5 recorder.
+
+    ``predicted_encs`` is the planner's per-candidate unroll output -- a
+    TensorDict ``{"visual": (T+tau, N, V, H, W, D), "proprio": (T+tau, N, P, emb)}``
+    or a bare visual Tensor of the same shape. We:
+      1) take only the imagined tail (``-plan_length:``) -- skip the tau context
+         prefix which is identical across candidates,
+      2) slice the K top candidates from the N batch dim,
+      3) mean-pool every dim between (T, K) and the trailing feature dim,
+      4) concat visual + proprio so the result is comparable to
+         ``compact_state_encoding(z, 'mean_tokens')`` queries.
+    """
+    def _pool_one(tensor):
+        # tensor: (T_total, N, ..., D)
+        tail = tensor[-plan_length:]
+        # Slice along candidate dim (dim 1).
+        topk = tail.index_select(dim=1, index=topk_idxs)
+        # topk: (plan_length, K, ..., D)
+        flat = topk.reshape(topk.shape[0], topk.shape[1], -1, topk.shape[-1])
+        return flat.mean(dim=2)
+
+    if hasattr(predicted_encs, "keys"):
+        pieces = []
+        if "visual" in predicted_encs.keys():
+            pieces.append(_pool_one(predicted_encs["visual"]))
+        if "proprio" in predicted_encs.keys():
+            pieces.append(_pool_one(predicted_encs["proprio"]))
+        if not pieces:
+            return None
+        return torch.cat(pieces, dim=2)
+    return _pool_one(predicted_encs)
+
+
 class Planner(ABC):
     def __init__(self, unroll: Callable):
         self.objective = None
@@ -45,9 +80,23 @@ class Planner(ABC):
     def plan(self, obs: torch.Tensor, steps_left: int):
         pass
 
-    def cost_function(self, actions: torch.Tensor, z_init: torch.Tensor) -> torch.Tensor:
+    def cost_function(
+        self,
+        actions: torch.Tensor,
+        z_init: torch.Tensor,
+        return_encodings: bool = False,
+    ):
+        """Score a batch of action candidates against the goal.
+
+        With ``return_encodings=True`` also returns the raw unrolled latents so
+        the caller can slice the top-K candidates without paying for a second
+        unroll. Used by Diagnostic 5 (CEM top-K candidate distribution).
+        """
         predicted_encs = self.unroll(z_init, actions)
-        return self.objective(predicted_encs, actions)
+        cost = self.objective(predicted_encs, actions)
+        if return_encodings:
+            return cost, predicted_encs
+        return cost
 
 
 class NevergradPlanner(Planner):
@@ -228,6 +277,7 @@ class CEMPlanner(Planner):
         decode_each_iteration: bool = False,
         decode_unroll: Callable = None,
         record_selected_plan_cost: bool = False,
+        record_topk_candidates: int = 0,
         **kwargs,
     ):
         super().__init__(unroll)
@@ -249,6 +299,11 @@ class CEMPlanner(Planner):
         self.decode_each_iteration = decode_each_iteration
         self.decode_unroll = decode_unroll
         self.record_selected_plan_cost = record_selected_plan_cost
+        # If > 0, retain the top-K candidates per CEM iteration (pooled imagined
+        # latents + actions + costs) for Diagnostic 5. Setting this to e.g. 10
+        # is essentially free compute-wise (the per-candidate unroll is already
+        # being done inside cost_function); the cost is memory + dump size.
+        self.record_topk_candidates = int(record_topk_candidates)
 
     @torch.no_grad()
     def plan(
@@ -285,6 +340,13 @@ class CEMPlanner(Planner):
         )
         losses, elite_means, elite_stds = [], [], []
         predicted_best_encs_over_iterations = []
+        # Diagnostic 5: per-iteration top-K candidate snapshots. We record the
+        # candidates BEFORE the elite-mean / momentum update so iter i reflects
+        # the candidate distribution that *iter i scored*, not the next iter's.
+        record_topk = self.record_topk_candidates > 0 and not self.distribute_planner
+        topk_iters_actions: List[torch.Tensor] = []
+        topk_iters_states: List[torch.Tensor] = []
+        topk_iters_costs: List[torch.Tensor] = []
         if self.decode_each_iteration:
             pred_frames_over_iterations = []
         # Iterate CEM
@@ -301,8 +363,15 @@ class CEMPlanner(Planner):
                     for i, (dims, maxnorm) in enumerate(zip(self.max_norm_dims, self.max_norms)):
                         # Clip the specified dimensions to [-maxnorm, maxnorm]
                         actions[h, :, dims] = torch.clip(actions[h, :, dims], min=-maxnorm, max=maxnorm)
-            # Compute elite actions
-            cost = self.cost_function(actions, z_init).unsqueeze(1)
+            # Compute elite actions. When recording top-K for diag 5, also keep
+            # the unroll output so we can slice the K best candidates' imagined
+            # latents without re-unrolling.
+            if record_topk:
+                cost, all_predicted_encs = self.cost_function(actions, z_init, return_encodings=True)
+                cost = cost.unsqueeze(1)
+            else:
+                cost = self.cost_function(actions, z_init).unsqueeze(1)
+                all_predicted_encs = None
             losses.append(cost.min().item())
             # Gather all values
             if self.distribute_planner:
@@ -312,6 +381,20 @@ class CEMPlanner(Planner):
                 all_actions = actions
             elite_idxs = torch.topk(-cost.squeeze(1), self.num_elites, dim=0).indices
             elite_loss, elite_actions = cost[elite_idxs], all_actions[:, elite_idxs]  # [EL,1] , [H,EL,A]
+            # Diagnostic 5 capture: pool top-K imagined latents inline (per (T,K)
+            # mean over spatial/proprio tokens), then CPU-transfer immediately to
+            # free GPU memory before the next iter.
+            if record_topk and all_predicted_encs is not None:
+                K = min(self.record_topk_candidates, cost.shape[0])
+                topk_idxs = torch.topk(-cost.squeeze(1), K, dim=0).indices
+                topk_iters_actions.append(all_actions[:, topk_idxs].detach().cpu().contiguous())
+                topk_iters_costs.append(cost[topk_idxs].squeeze(1).detach().cpu().contiguous())
+                pooled = _pool_topk_imagined(all_predicted_encs, topk_idxs, plan_length)
+                if pooled is not None:
+                    topk_iters_states.append(pooled.detach().cpu().contiguous())
+                else:
+                    topk_iters_states.append(torch.empty(0))
+                del all_predicted_encs
             # Log the mean and std of the elite values
             elite_means.append(elite_loss.mean().item())
             elite_stds.append(elite_loss.std().item())
@@ -339,6 +422,14 @@ class CEMPlanner(Planner):
                 "selected_plan_cost": self.cost_function(mean.unsqueeze(1), z_init).detach().flatten()[0],
                 "selected_plan_actions": mean.detach(),
             }
+        if record_topk:
+            # Per-iter top-K candidate snapshots for Diagnostic 5.
+            #   topk_iters_actions[i]: (plan_length, K, action_dim)
+            #   topk_iters_states[i]:  (plan_length, K, D_state) pooled imagined latents
+            #   topk_iters_costs[i]:   (K,) terminal-cost (planner objective)
+            info["topk_iters_actions"] = topk_iters_actions
+            info["topk_iters_states"] = topk_iters_states
+            info["topk_iters_costs"] = topk_iters_costs
         if self.distribute_planner:
             dist.broadcast(a, src=0)
         result = PlanningResult(
