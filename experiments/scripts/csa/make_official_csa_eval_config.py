@@ -86,8 +86,32 @@ def make_config(
     cfg["distributed"].setdefault("distribute_multitask_eval", False)
 
     cfg.setdefault("logging", {})
-    cfg["logging"].setdefault("optional_plots", False)
+    # Diagnostic eval is lean -- no per-iter image decode, no optional plots.
+    # Both: a) save wall-clock, b) avoid loading the state_head + image_head
+    # vis decoders, which often aren't shipped with the released training
+    # checkpoints. We DO need the encoder + predictor (loaded from the main
+    # checkpoint) -- the recorder uses ``model.encode`` + ``agent.objective``.
+    cfg["logging"]["optional_plots"] = False
     cfg["logging"].setdefault("tqdm_silent", False)
+    cfg.setdefault("planner", {})
+    cfg["planner"]["decode_each_iteration"] = False
+
+    # Drop vis-only heads that the released ckpts don't ship: the state_head is
+    # a separate ``step2_<env>_state_head`` training artifact that isn't in
+    # $JEPAWM_CKPT. The diagnostic flow never decodes back to env state.
+    heads_cfg = (
+        cfg.get("model_kwargs", {})
+        .get("pretrain_kwargs", {})
+        .get("heads_cfg", {})
+    )
+    architectures = heads_cfg.get("architectures") or {}
+    architectures.pop("state_head", None)
+    pretrain_dec_path = heads_cfg.get("pretrain_dec_path") or {}
+    pretrain_dec_path.pop("state_head", None)
+    if architectures:
+        heads_cfg["architectures"] = architectures
+    if pretrain_dec_path:
+        heads_cfg["pretrain_dec_path"] = pretrain_dec_path
 
     # Only ``enabled`` (and optional ``dump_dir``) are read by the eval hook --
     # the full diagnostic suite + support memory live offline in analysis.py.
