@@ -554,6 +554,9 @@ def test_diagnostic_recorder_round_trips_topk_iters_fields(tmp_path):
 
 
 def test_analyze_runs_diagnostic_5_when_topk_iters_present():
+    """Diag 5 reports the 4-quadrant distribution under BOTH threshold regimes
+    (topk_relative, diag0_reference) and BOTH axis choices (by_action, by_csa).
+    """
     torch.manual_seed(3)
     d_state, action_dim = 8, 2
     memory = SupportMemory.from_tensors(
@@ -575,21 +578,97 @@ def test_analyze_runs_diagnostic_5_when_topk_iters_present():
     # 3 episodes × 1 step × 6 iters × 5 ranks × 4 depths = 360 candidate queries.
     assert diag5["num_candidate_queries"] == 3 * 1 * 6 * 5 * 4
     assert diag5["n_cem_iterations"] == 6
-    assert set(diag5["by_outcome"]["success"].keys()) >= {
-        "count", "p_unfamiliar_supported", "p_unfamiliar_unsupported",
-        "p_familiar_supported", "p_familiar_unsupported",
-    }
-    # By-iter buckets exist + each carries a probability vector that sums to ~1.
-    for slice_key, slice_counts in diag5["by_iter"].items():
-        if slice_counts["count"] == 0:
-            continue
-        probs = [
-            slice_counts["p_unfamiliar_supported"],
-            slice_counts["p_unfamiliar_unsupported"],
-            slice_counts["p_familiar_supported"],
-            slice_counts["p_familiar_unsupported"],
-        ]
-        assert abs(sum(probs) - 1.0) < 1e-5
+
+    # Wording note explicitly disclaims "rank 0 = the executed selected plan".
+    note = diag5["wording_note"].lower()
+    assert "rank 0" in note
+    assert "not the executed selected plan" in note
+
+    # Both threshold regimes are present.
+    assert "topk_relative" in diag5
+    assert "diag0_reference" in diag5
+
+    for regime_key in ("topk_relative", "diag0_reference"):
+        regime = diag5[regime_key]
+        # Both regimes resolved (synthetic dumps always yield decision-step records).
+        assert "thresholds" in regime, f"{regime_key} missing thresholds: {regime}"
+        thr = regime["thresholds"]
+        assert thr["state_threshold"] is not None
+        assert thr["action_threshold"] is not None
+        assert thr["csa_threshold"] is not None
+        # Threshold source is labelled per regime so downstream summaries can render it.
+        assert thr["source"] in {"topk_candidates", "diag0_selected_plan_decision_step_records"}
+
+        for axis_key in ("by_action", "by_csa"):
+            axis = regime[axis_key]
+            # Each axis surfaces by_outcome / by_iter / by_iter_outcome / by_rank / by_depth.
+            for slice_group in ("by_outcome", "by_iter", "by_iter_outcome", "by_rank", "by_depth"):
+                assert slice_group in axis, f"{regime_key}.{axis_key} missing {slice_group}"
+
+            # By-outcome carries the four quadrant probabilities.
+            assert set(axis["by_outcome"]["success"].keys()) >= {
+                "count", "p_unfamiliar_supported", "p_unfamiliar_unsupported",
+                "p_familiar_supported", "p_familiar_unsupported",
+            }
+
+            # Every non-empty slice's probability vector sums to ~1.
+            for slice_group in ("by_outcome", "by_iter", "by_iter_outcome", "by_rank", "by_depth"):
+                for slice_counts in axis[slice_group].values():
+                    if slice_counts["count"] == 0:
+                        continue
+                    probs = [
+                        slice_counts["p_unfamiliar_supported"],
+                        slice_counts["p_unfamiliar_unsupported"],
+                        slice_counts["p_familiar_supported"],
+                        slice_counts["p_familiar_unsupported"],
+                    ]
+                    assert abs(sum(probs) - 1.0) < 1e-5
+
+            # H5 verdict booleans exist for each (regime, axis) pair.
+            for k in (
+                "h5_failure_greater_than_success",
+                "h5_monotone_in_iter",
+                "h5_monotone_in_depth",
+                "h5_verdict",
+            ):
+                assert k in axis, f"{regime_key}.{axis_key} missing {k}"
+
+
+def test_diagnostic_5_topk_relative_and_diag0_reference_use_different_thresholds():
+    """The two threshold regimes are computed from different reference
+    distributions, so their numerical cut points should not coincide on
+    random data.
+    """
+    torch.manual_seed(99)
+    d_state, action_dim = 8, 2
+    memory = SupportMemory.from_tensors(
+        torch.randn(128, d_state),
+        torch.randn(128, action_dim),
+        pca_dim=4,
+        state_reduction="flatten",
+        metadata={"frameskip": 5, "action_skip": 1, "action_space": "model_normalized"},
+    )
+    dumps = [
+        _make_topk_dump(episode_id=i, episode_success=(i % 2 == 0), n_iters=6, K=5,
+                        plan_length=4, d_state=d_state, action_dim=action_dim)
+        for i in range(3)
+    ]
+    report = analyze(dumps, memory, state_k=4, action_k=4, beta=1.0)
+    diag5 = report["diagnostic_5_topk_cem_quadrants"]
+    thr_topk = diag5["topk_relative"]["thresholds"]
+    thr_d0 = diag5["diag0_reference"]["thresholds"]
+    assert thr_topk["source"] == "topk_candidates"
+    assert thr_d0["source"] == "diag0_selected_plan_decision_step_records"
+    # The topk_relative reference is the top-K candidate set (much larger than
+    # the decision-step set in this synthetic case).
+    assert thr_topk["num_reference_records"] > thr_d0["num_reference_records"]
+    # The two regimes draw thresholds from disjoint distributions; with random
+    # data the cut points are extremely unlikely to be bitwise-equal.
+    assert (
+        thr_topk["state_threshold"] != thr_d0["state_threshold"]
+        or thr_topk["action_threshold"] != thr_d0["action_threshold"]
+        or thr_topk["csa_threshold"] != thr_d0["csa_threshold"]
+    )
 
 
 def test_analyze_reports_diag5_not_computed_when_topk_iters_absent():

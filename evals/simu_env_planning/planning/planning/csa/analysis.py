@@ -16,10 +16,22 @@ This module consumes the per-episode ``.pt`` dumps written by
                    function of imagined-rollout depth.
 * Diagnostic 5  -- full 4-quadrant distribution of CEM top-K candidate
                    trajectories, indexed by (CEM iter x rank x depth x outcome).
+                   Reports the distribution under two threshold regimes and two
+                   axis choices each:
+                     - ``topk_relative.by_action``  thresholds from top-K scores,
+                       axes (U_state low/high) x (U_action low/high)
+                     - ``topk_relative.by_csa``     thresholds from top-K scores,
+                       axes (U_state low/high) x (U_SA low/high)
+                     - ``diag0_reference.by_action``  thresholds from the diag-0
+                       selected-plan decision-step records, axes by_action
+                     - ``diag0_reference.by_csa``     same source, axes by_csa
                    Tests H5: failed episodes + later CEM iterations concentrate
                    more probability mass in (state-familiar, action-unsupported)
                    than successful episodes + early iterations. Requires the
-                   ``topk_iters_*`` fields in the dump (schema v2).
+                   ``topk_iters_*`` fields in the dump (schema v2). NOTE that
+                   top-K rank 0 is the best *sampled* candidate at a CEM iter
+                   and is NOT the executed selected plan -- the executed plan
+                   is the CEM mean action and is covered by diagnostics 0-4.
 
 Everything runs offline, so the support memory, k, beta and every diagnostic
 threshold can be re-tuned without re-running eval.
@@ -175,6 +187,7 @@ def analyze(
     diag5 = _diagnostic_5(
         dumps,
         memory,
+        records=records,
         state_k=state_k,
         action_k=action_k,
         beta=beta,
@@ -451,6 +464,7 @@ def _diagnostic_5(
     dumps: List[Dict[str, Any]],
     memory: SupportMemory,
     *,
+    records: List[Dict[str, Any]] | None = None,
     state_k: int = 64,
     action_k: int = 64,
     beta: float = 1.0,
@@ -459,13 +473,32 @@ def _diagnostic_5(
     action_unsupported_quantile: float = 0.75,
     iter_buckets: int = 3,
 ) -> Dict[str, Any]:
-    """Joint distribution of CEM top-K candidate trajectories across the 2x2
-    (U_state low/high, U_action|x low/high) grid, sliced by CEM iteration, rank,
+    """Joint distribution of CEM top-K candidate trajectories across two
+    threshold regimes and two axis choices, sliced by CEM iteration, rank,
     rollout depth, and episode outcome.
 
+    Threshold regimes:
+      * ``topk_relative``  -- thresholds = quantiles of the top-K candidate
+        scores themselves. Internally consistent: what fraction of the top-K
+        candidates land in each quadrant relative to the top-K distribution.
+      * ``diag0_reference`` -- thresholds = quantiles of the diag-0
+        selected-plan decision-step scores (the depth=0 records used by the
+        diag-0 census). Compares the top-K distribution against the same
+        reference cuts diag-0 uses, so the H5 readout is directly comparable
+        to the selected-plan failure-mode census.
+
+    Axis choices (per regime):
+      * ``by_action`` -- (U_state low/high) x (U_action low/high)
+      * ``by_csa``    -- (U_state low/high) x (U_SA low/high), U_SA = U_state + beta * U_action
+
     H5: failed episodes + later CEM iterations carry more probability mass in
-    the (state-familiar, action-unsupported) quadrant than successes + early
-    iterations. This is the planner-exploitation-of-poor-support signal.
+    the (state-familiar, action-unsupported / SA-unsupported) "KEY" quadrant
+    than successes + early iterations.
+
+    Wording note (also surfaced in the report): top-K rank 0 is the best
+    *sampled* candidate at a CEM iteration; it is NOT the executed selected
+    plan -- the executed plan is the CEM mean action, covered by
+    diagnostics 0-4.
 
     Requires dumps written with schema v2 (``topk_iters_*`` present).
     """
@@ -526,123 +559,171 @@ def _diagnostic_5(
     if not have_any or not meta:
         return {"status": "not_computed", "reason": "no schema-v2 dumps with topk_iters_* fields"}
 
-    # Score all queries against M_real (one big batched kNN).
+    # Score every top-K candidate query against M_real (one batched kNN).
     scorer = ConditionalSupportScorer(
         memory=memory, state_k=state_k, action_k=action_k, beta=beta, chunk_size=chunk_size
     )
     scores = scorer.score(torch.stack(states), torch.stack(actions), raw_state=True)
     state_score = scores["state_score"].detach().cpu()
     action_score = scores["action_score"].detach().cpu()
+    csa_score = scores["csa_score"].detach().cpu()
 
-    # Quadrant assignment using the SAME thresholds as diag-0 primary (so the
-    # H5 verdict is comparable to the selected-plan failure-mode census).
-    state_thr = float(torch.quantile(state_score, state_familiar_quantile).item())
-    action_thr = float(torch.quantile(action_score, action_unsupported_quantile).item())
-    state_familiar = state_score <= state_thr  # "familiar" = low U_state
-    action_unsupported = action_score >= action_thr
-
-    # The "key" quadrant for H5: state-familiar AND action-unsupported.
-    quadrant_idx = state_familiar.long() * 2 + action_unsupported.long()
-    # 0 = unfamiliar_supported, 1 = unfamiliar_unsupported,
-    # 2 = familiar_supported,   3 = familiar_unsupported (KEY)
-
+    # Slice index tensors shared across all (regime, axis) sub-trees.
     n_iters_total = max(m["iter"] for m in meta) + 1
     iter_bucket_size = max(1, int((n_iters_total + iter_buckets - 1) // iter_buckets))
     max_depth = max(m["depth"] for m in meta)
     max_rank = max(m["rank"] for m in meta)
-
-    def _bucket_iter(i: int) -> str:
-        b = min(iter_buckets - 1, i // iter_bucket_size)
-        return f"iter_b{b}"
-
-    # Build counts per slice.
-    def _quadrant_counts(mask: torch.Tensor) -> Dict[str, Any]:
-        if not bool(mask.any()):
-            return {"count": 0}
-        counts = torch.zeros(4, dtype=torch.long)
-        for q in range(4):
-            counts[q] = ((quadrant_idx == q) & mask).sum()
-        total = int(counts.sum().item())
-        if total == 0:
-            return {"count": 0}
-        probs = (counts.float() / total).tolist()
-        return {
-            "count": total,
-            "p_unfamiliar_supported": probs[0],
-            "p_unfamiliar_unsupported": probs[1],
-            "p_familiar_supported": probs[2],
-            "p_familiar_unsupported": probs[3],  # KEY quadrant
-        }
-
     succ = torch.tensor([m["episode_success"] for m in meta]).bool()
     iter_idx = torch.tensor([m["iter"] for m in meta])
     rank_idx = torch.tensor([m["rank"] for m in meta])
     depth_idx = torch.tensor([m["depth"] for m in meta])
 
-    by_outcome = {
-        "success": _quadrant_counts(succ),
-        "failure": _quadrant_counts(~succ),
+    def _build_distribution(state_thr: float, axis_score: torch.Tensor, axis_thr: float) -> Dict[str, Any]:
+        """Build the full slice tree (by_outcome / by_iter / by_rank / by_depth +
+        H5 verdict probes) for one quadrant assignment.
+
+        ``axis_score`` is either ``action_score`` (by_action) or ``csa_score``
+        (by_csa); ``axis_thr`` is the matching ``high`` cutoff.
+        """
+        state_familiar = state_score <= state_thr  # "familiar" = low U_state
+        axis_unsupported = axis_score >= axis_thr
+        # 0 = unfamiliar_supported, 1 = unfamiliar_unsupported,
+        # 2 = familiar_supported,   3 = familiar_unsupported  (KEY for H5)
+        quadrant_idx = state_familiar.long() * 2 + axis_unsupported.long()
+
+        def _counts(mask: torch.Tensor) -> Dict[str, Any]:
+            if not bool(mask.any()):
+                return {"count": 0}
+            counts = torch.zeros(4, dtype=torch.long)
+            for q in range(4):
+                counts[q] = ((quadrant_idx == q) & mask).sum()
+            total = int(counts.sum().item())
+            if total == 0:
+                return {"count": 0}
+            probs = (counts.float() / total).tolist()
+            return {
+                "count": total,
+                "p_unfamiliar_supported": probs[0],
+                "p_unfamiliar_unsupported": probs[1],
+                "p_familiar_supported": probs[2],
+                "p_familiar_unsupported": probs[3],  # KEY quadrant
+            }
+
+        by_outcome = {
+            "success": _counts(succ),
+            "failure": _counts(~succ),
+        }
+        by_iter: Dict[str, Any] = {}
+        by_iter_outcome: Dict[str, Any] = {}
+        for b in range(iter_buckets):
+            lo = b * iter_bucket_size
+            hi = min(n_iters_total, lo + iter_bucket_size)
+            mask = (iter_idx >= lo) & (iter_idx < hi)
+            by_iter[f"b{b}_iters_{lo}_{hi - 1}"] = _counts(mask)
+            by_iter_outcome[f"b{b}_iters_{lo}_{hi - 1}_success"] = _counts(mask & succ)
+            by_iter_outcome[f"b{b}_iters_{lo}_{hi - 1}_failure"] = _counts(mask & ~succ)
+        by_rank = {f"rank_{k}": _counts(rank_idx == k) for k in range(min(max_rank + 1, 10))}
+        by_depth = {f"depth_{d}": _counts(depth_idx == d) for d in range(max_depth + 1)}
+
+        # H5 monotonicity probes.
+        def _p_key(slice_counts: Dict[str, Any]) -> float | None:
+            return slice_counts.get("p_familiar_unsupported")
+
+        iter_keys_sorted = sorted(by_iter.keys())
+        p_key_by_iter = [_p_key(by_iter[k]) for k in iter_keys_sorted]
+        monotone_iter = (
+            all(p is not None for p in p_key_by_iter)
+            and all(p_key_by_iter[i] <= p_key_by_iter[i + 1] for i in range(len(p_key_by_iter) - 1))
+        )
+        depth_keys_sorted = sorted(by_depth.keys(), key=lambda k: int(k.split("_")[1]))
+        p_key_by_depth = [_p_key(by_depth[k]) for k in depth_keys_sorted]
+        monotone_depth = (
+            all(p is not None for p in p_key_by_depth)
+            and all(p_key_by_depth[i] <= p_key_by_depth[i + 1] for i in range(len(p_key_by_depth) - 1))
+        )
+        fail_p_key = _p_key(by_outcome["failure"])
+        succ_p_key = _p_key(by_outcome["success"])
+        failure_greater_than_success = (
+            fail_p_key is not None and succ_p_key is not None and fail_p_key > succ_p_key
+        )
+        h5_verdict = bool(failure_greater_than_success and monotone_iter and monotone_depth)
+        return {
+            "by_outcome": by_outcome,
+            "by_iter": by_iter,
+            "by_iter_outcome": by_iter_outcome,
+            "by_rank": by_rank,
+            "by_depth": by_depth,
+            "h5_failure_greater_than_success": bool(failure_greater_than_success),
+            "h5_monotone_in_iter": bool(monotone_iter),
+            "h5_monotone_in_depth": bool(monotone_depth),
+            "h5_verdict": h5_verdict,
+        }
+
+    # ---- Regime 1: top-K relative ------------------------------------------
+    state_thr_topk = float(torch.quantile(state_score, state_familiar_quantile).item())
+    action_thr_topk = float(torch.quantile(action_score, action_unsupported_quantile).item())
+    csa_thr_topk = float(torch.quantile(csa_score, action_unsupported_quantile).item())
+    topk_relative = {
+        "thresholds": {
+            "source": "topk_candidates",
+            "state_familiar_quantile": state_familiar_quantile,
+            "action_unsupported_quantile": action_unsupported_quantile,
+            "state_threshold": state_thr_topk,
+            "action_threshold": action_thr_topk,
+            "csa_threshold": csa_thr_topk,
+            "num_reference_records": int(state_score.numel()),
+        },
+        "by_action": _build_distribution(state_thr_topk, action_score, action_thr_topk),
+        "by_csa": _build_distribution(state_thr_topk, csa_score, csa_thr_topk),
     }
-    by_iter = {}
-    by_iter_outcome = {}
-    for b in range(iter_buckets):
-        lo = b * iter_bucket_size
-        hi = min(n_iters_total, lo + iter_bucket_size)
-        mask = (iter_idx >= lo) & (iter_idx < hi)
-        by_iter[f"b{b}_iters_{lo}_{hi - 1}"] = _quadrant_counts(mask)
-        by_iter_outcome[f"b{b}_iters_{lo}_{hi - 1}_success"] = _quadrant_counts(mask & succ)
-        by_iter_outcome[f"b{b}_iters_{lo}_{hi - 1}_failure"] = _quadrant_counts(mask & ~succ)
 
-    by_rank = {f"rank_{k}": _quadrant_counts(rank_idx == k) for k in range(min(max_rank + 1, 10))}
-
-    by_depth = {f"depth_{d}": _quadrant_counts(depth_idx == d) for d in range(max_depth + 1)}
-
-    # H5 monotonicity probes.
-    def _p_key(slice_counts: Dict[str, Any]) -> float | None:
-        return slice_counts.get("p_familiar_unsupported")
-
-    iter_keys_sorted = sorted(by_iter.keys())
-    p_key_by_iter = [_p_key(by_iter[k]) for k in iter_keys_sorted]
-    monotone_iter = (
-        all(p is not None for p in p_key_by_iter)
-        and all(p_key_by_iter[i] <= p_key_by_iter[i + 1] for i in range(len(p_key_by_iter) - 1))
-    )
-
-    depth_keys_sorted = sorted(by_depth.keys(), key=lambda k: int(k.split("_")[1]))
-    p_key_by_depth = [_p_key(by_depth[k]) for k in depth_keys_sorted]
-    monotone_depth = (
-        all(p is not None for p in p_key_by_depth)
-        and all(p_key_by_depth[i] <= p_key_by_depth[i + 1] for i in range(len(p_key_by_depth) - 1))
-    )
-
-    fail_p_key = _p_key(by_outcome["failure"])
-    succ_p_key = _p_key(by_outcome["success"])
-    failure_greater_than_success = (
-        fail_p_key is not None and succ_p_key is not None and fail_p_key > succ_p_key
-    )
-
-    h5_verdict = bool(failure_greater_than_success and monotone_iter and monotone_depth)
+    # ---- Regime 2: diag-0 reference (selected-plan decision-step records) --
+    decision_records = [r for r in (records or []) if r.get("is_decision_step")]
+    if decision_records:
+        diag0_state_ref = torch.tensor(
+            [float(r["state_score"]) for r in decision_records], dtype=torch.float32
+        )
+        diag0_action_ref = torch.tensor(
+            [float(r["action_score"]) for r in decision_records], dtype=torch.float32
+        )
+        diag0_csa_ref = torch.tensor(
+            [float(r["csa_score"]) for r in decision_records], dtype=torch.float32
+        )
+        state_thr_d0 = float(torch.quantile(diag0_state_ref, state_familiar_quantile).item())
+        action_thr_d0 = float(torch.quantile(diag0_action_ref, action_unsupported_quantile).item())
+        csa_thr_d0 = float(torch.quantile(diag0_csa_ref, action_unsupported_quantile).item())
+        diag0_reference: Dict[str, Any] = {
+            "thresholds": {
+                "source": "diag0_selected_plan_decision_step_records",
+                "state_familiar_quantile": state_familiar_quantile,
+                "action_unsupported_quantile": action_unsupported_quantile,
+                "state_threshold": state_thr_d0,
+                "action_threshold": action_thr_d0,
+                "csa_threshold": csa_thr_d0,
+                "num_reference_records": int(diag0_state_ref.numel()),
+            },
+            "by_action": _build_distribution(state_thr_d0, action_score, action_thr_d0),
+            "by_csa": _build_distribution(state_thr_d0, csa_score, csa_thr_d0),
+        }
+    else:
+        diag0_reference = {
+            "status": "not_computed",
+            "reason": "no diag-0 selected-plan decision-step records available",
+        }
 
     return {
         "status": "computed",
         "num_candidate_queries": len(meta),
         "n_cem_iterations": int(n_iters_total),
         "iter_bucket_size": iter_bucket_size,
-        "thresholds": {
-            "state_familiar_quantile": state_familiar_quantile,
-            "action_unsupported_quantile": action_unsupported_quantile,
-            "state_threshold": state_thr,
-            "action_threshold": action_thr,
-        },
-        "by_outcome": by_outcome,
-        "by_iter": by_iter,
-        "by_iter_outcome": by_iter_outcome,
-        "by_rank": by_rank,
-        "by_depth": by_depth,
-        "h5_failure_greater_than_success": bool(failure_greater_than_success),
-        "h5_monotone_in_iter": bool(monotone_iter),
-        "h5_monotone_in_depth": bool(monotone_depth),
-        "h5_verdict": h5_verdict,
+        "n_iter_buckets": iter_buckets,
+        "wording_note": (
+            "Top-K rank 0 is the best sampled candidate at a CEM iteration, NOT "
+            "the executed selected plan. The executed plan is the CEM mean "
+            "action and is handled by diagnostics 0-4."
+        ),
+        "topk_relative": topk_relative,
+        "diag0_reference": diag0_reference,
     }
 
 
