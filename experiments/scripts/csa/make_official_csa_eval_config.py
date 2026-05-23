@@ -65,6 +65,7 @@ def make_config(
     tag: str = "csa_diag/full",
     quick_debug: bool = False,
     dump_dir: str | None = None,
+    seed: int | None = None,
     extra_overrides: dict | None = None,
 ) -> dict:
     defaults = ENV_DEFAULTS[env]
@@ -79,6 +80,11 @@ def make_config(
     cfg.setdefault("meta", {})
     cfg["meta"]["quick_debug"] = bool(quick_debug)
     cfg["meta"]["eval_episodes"] = int(eval_episodes)
+    # meta.seed shifts the rng so a second run on the same env produces
+    # disjoint episodes (different rand_vec init/goal pairs). Pool dumps from
+    # multiple seeds at analysis time to get a larger effective episode count.
+    if seed is not None:
+        cfg["meta"]["seed"] = int(seed)
 
     cfg.setdefault("distributed", {})
     # Keep distributed multi-task eval flag from the base config -- some envs
@@ -144,6 +150,7 @@ def main() -> None:
     parser.add_argument("--tag", default="csa_diag/full")
     parser.add_argument("--quick-debug", action="store_true", help="Quick-debug mode (1 episode, 2 CEM samples, etc.)")
     parser.add_argument("--dump-dir", default=None, help="Optional override for the per-episode dump root")
+    parser.add_argument("--seed", type=int, default=None, help="Optional meta.seed override (use a different seed to fan out disjoint episodes across GPUs).")
     args = parser.parse_args()
 
     cfg = make_config(
@@ -154,6 +161,7 @@ def main() -> None:
         tag=args.tag,
         quick_debug=args.quick_debug,
         dump_dir=args.dump_dir,
+        seed=args.seed,
     )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
