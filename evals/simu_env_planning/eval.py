@@ -17,6 +17,7 @@ import yaml
 from omegaconf import OmegaConf
 
 from evals.simu_env_planning.envs.init import make_env
+from evals.simu_env_planning.planning.config_overrides import apply_quick_debug_overrides
 from evals.simu_env_planning.planning.common.gc_logger import Logger
 from evals.simu_env_planning.planning.common.parser import parse_cfg
 from evals.simu_env_planning.planning.gc_agent import GC_Agent
@@ -177,11 +178,7 @@ def main_distributed_episodes_eval(cfg: dict, model=None, dset=None, preprocesso
 
     if cfg.meta.quick_debug:
         log.info("Quick debug mode enabled.")
-        cfg.meta.eval_episodes = 1
-        cfg.planner.iterations = 2
-        cfg.planner.num_samples = 2
-        cfg.planner.num_elites = 2
-        cfg.logging.tqdm_silent = False
+        apply_quick_debug_overrides(cfg)
     if cfg.planner.planner_name in ["cem", "mppi", "nevergrad"]:
         assert cfg.planner.num_elites <= cfg.planner.num_samples, "num_elites should be <= num_samples"
         assert cfg.planner.num_elites > 1, "num_elites should be > 1"

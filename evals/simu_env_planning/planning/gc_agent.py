@@ -47,7 +47,12 @@ class GC_Agent:
         self.model.eval()
         self.goal_state = None
         self._prev_losses = None
+        self._prev_plan_info = {}
+        # Stashed by ``act`` so the CSA diagnostic recorder can read the pooled
+        # decision-state latent without re-encoding the observation.
+        self._last_z_init = None
         # --------
+        csa_diag_enabled = bool(_cfg_get(_cfg_get(self.cfg, "csa_diagnostics", None), "enabled", False))
         if self.cfg.planner.planner_name == "nevergrad":
             self.planner = NevergradPlanner(
                 unroll=self.model.unroll,
@@ -93,6 +98,10 @@ class GC_Agent:
             )
         else:
             raise ValueError(f"Unknown planner: {self.cfg.planner}")
+        # The CEM planner needs to additionally return the selected plan's
+        # objective value + action chunk so the recorder can dump them.
+        if hasattr(self.planner, "record_selected_plan_cost"):
+            self.planner.record_selected_plan_cost = csa_diag_enabled
 
     @torch.no_grad()
     def set_goal(self, goal_state):
@@ -142,6 +151,7 @@ class GC_Agent:
             steps_left=steps_left,
         )
         self._prev_losses = planning_result.losses
+        self._prev_plan_info = planning_result.info or {}
         self._prev_elite_losses_mean = planning_result.prev_elite_losses_mean
         self._prev_elite_losses_std = planning_result.prev_elite_losses_std
         self._prev_pred_frames_over_iterations = planning_result.pred_frames_over_iterations
@@ -173,8 +183,24 @@ class GC_Agent:
         elif self.cfg.task_specification.obs == "rgb_state":
             obs = obs.to(self.device, non_blocking=True).unsqueeze(0)
         z = self.model.encode(obs, act=True)
+        # Stash the encoded init context so PlanEvaluator's DiagnosticRecorder can
+        # read the pooled decision-state latent without re-encoding the obs.
+        self._last_z_init = z
         a = self.plan(
             z,
             steps_left=steps_left,
         )
         return a.cpu()
+
+
+def _cfg_get(cfg, key, default=None):
+    if cfg is None:
+        return default
+    if isinstance(cfg, dict):
+        return cfg.get(key, default)
+    if hasattr(cfg, "get"):
+        try:
+            return cfg.get(key, default)
+        except Exception:
+            pass
+    return getattr(cfg, key, default)

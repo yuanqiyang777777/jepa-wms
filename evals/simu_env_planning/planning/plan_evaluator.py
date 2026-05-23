@@ -6,6 +6,7 @@
 #
 
 import os
+from pathlib import Path
 from time import time
 
 import numpy as np
@@ -16,6 +17,11 @@ from tensordict.tensordict import TensorDict
 from tqdm.auto import tqdm
 
 from evals.simu_env_planning.envs.init import make_env
+from evals.simu_env_planning.planning.planning.csa.diagnostic_recorder import (
+    DUMP_FILENAME,
+    DiagnosticRecorder,
+)
+from evals.simu_env_planning.planning.planning.csa.support_memory import compact_state_encoding
 from evals.simu_env_planning.planning.episode_plot_utils import (
     analyze_distances,
     compare_unrolled_plan_expert,
@@ -33,6 +39,48 @@ from evals.utils import prepare_obs
 from src.utils.logging import get_logger
 
 log = get_logger(__name__)
+
+
+def _cfg_get(cfg, key, default=None):
+    if cfg is None:
+        return default
+    if isinstance(cfg, dict):
+        return cfg.get(key, default)
+    if hasattr(cfg, "get"):
+        try:
+            return cfg.get(key, default)
+        except Exception:
+            pass
+    return getattr(cfg, key, default)
+
+
+def _compact_per_step(tensor):
+    """Pool a per-step encoded tensor into [n, D_feat].
+
+    Input: ``[n, tau, ...spatial..., D_feat]``. We treat dim 0 as the item
+    (step) axis, fold every intervening dim into the token axis, and mean-pool
+    to get a single feature vector per step.
+    """
+    if tensor.ndim < 2:
+        raise ValueError(f"Expected at least 2D per-step encoding, got shape {tuple(tensor.shape)}")
+    if tensor.ndim == 2:
+        return tensor.to(dtype=torch.float32)
+    flat = tensor.reshape(tensor.shape[0], -1, tensor.shape[-1])
+    return flat.mean(dim=1).to(dtype=torch.float32)
+
+
+def _state_dist_from_info(cfg, env, state_g, info):
+    if state_g is None or info is None or "state" not in info:
+        return None
+    try:
+        if (
+            any(pref in cfg.task_specification.task for pref in ["mw", "robocasa"])
+            and cfg.task_specification.succ_def == "simu"
+        ):
+            return float(np.linalg.norm(state_g - info["state"]))
+        return float(env.eval_state(state_g, info["state"])["state_dist"])
+    except Exception:
+        return None
 
 
 class PlanEvaluator:
@@ -142,6 +190,7 @@ class PlanEvaluator:
         ep_obs_proprio_td_list = [td]
         infos_list = []
         actions = []
+        replan_idx = 0
         pbar = tqdm(
             desc="executing agent",
             total=env.max_steps(),
@@ -151,6 +200,9 @@ class PlanEvaluator:
             disable=env.cfg.logging.tqdm_silent,
         )
         while not done:
+            step_idx = env.elapsed_steps()
+            current_info = infos_list[-1] if infos_list else info
+            prev_state_dist = _state_dist_from_info(self.cfg, env, self.state_g, current_info)
             plan_vis_path = (
                 f"{self.ep_plan_vis_dir}/step{env.elapsed_steps()}" if self.cfg.planner.decode_each_iteration else None
             )
@@ -227,6 +279,13 @@ class PlanEvaluator:
             if success and self.cfg.task_specification.done_at_succ:
                 done = True
             ep_reward += reward
+            self._record_csa_step_if_enabled(
+                replan_idx=replan_idx,
+                n_real_obs=len(obses),
+                success=success,
+                state_dist=state_dist,
+            )
+            replan_idx += 1
             for obs, info in zip(obses, infos):
                 td = make_td(obs, info)
                 ep_obs_proprio_td_list.append(td)
@@ -253,6 +312,195 @@ class PlanEvaluator:
 
         pbar.close()
         return ep_obs_proprio_td_list, ep_reward, actions, infos_list, success, state_dist
+
+    def _record_csa_step_if_enabled(self, *, replan_idx, n_real_obs, success, state_dist):
+        """Capture per-replan-step diagnostic state.
+
+        Pools the pooled latents inline (cheap; the heavy real-trajectory encode
+        runs once in ``_finalize_csa_recorder`` at episode end). Wrapped in
+        try/except so any recorder bug only nukes the dump for this episode --
+        never the eval itself.
+        """
+        if getattr(self, "_diag_recorder", None) is None:
+            return
+        try:
+            agent = self.agent
+            z_init = agent._last_z_init
+            plan_info = dict(agent._prev_plan_info or {})
+            prev_losses = agent._prev_losses
+            imagined_full = getattr(self, "_last_imagined_best", None)
+
+            decision_state = compact_state_encoding(z_init, reduction="mean_tokens").squeeze(0)
+
+            sel_actions = plan_info.get("selected_plan_actions")
+            # The planner's selected-plan length is the IMAGINED rollout depth
+            # (= number of action chunks before action_skip expansion). Use it
+            # if available; fall back to n_real_obs which equals plan_length
+            # only for action_skip=1 (true for Phase-1 envs).
+            if sel_actions is not None:
+                plan_length = int(sel_actions.shape[0])
+            else:
+                plan_length = int(n_real_obs)
+            imagined_pooled = self._pool_imagined_tail(imagined_full, plan_length=plan_length)
+
+            if sel_actions is None:
+                sel_actions = torch.zeros(0)
+            sel_actions_cpu = sel_actions.detach().cpu() if isinstance(sel_actions, torch.Tensor) else torch.as_tensor(sel_actions)
+
+            sel_cost = plan_info.get("selected_plan_cost")
+            if sel_cost is not None:
+                predicted_terminal_cost = float(sel_cost.detach().flatten()[0].cpu().item())
+            elif prev_losses is not None and prev_losses.numel() > 0:
+                predicted_terminal_cost = float(prev_losses.detach().flatten()[-1].cpu().item())
+            else:
+                predicted_terminal_cost = float("nan")
+
+            self._csa_step_pending.append(
+                {
+                    "replan_idx": int(replan_idx),
+                    "decision_state": decision_state.detach().cpu(),
+                    "imagined_states": imagined_pooled.detach().cpu() if imagined_pooled is not None else None,
+                    "selected_actions": sel_actions_cpu,
+                    "predicted_terminal_cost": predicted_terminal_cost,
+                    "n_real_obs": int(n_real_obs),
+                    "step_success": bool(success),
+                    "state_dist": float(state_dist) if state_dist is not None else float("nan"),
+                }
+            )
+        except Exception as exc:
+            log.warning(f"CSA recorder per-step capture failed (replan_idx={replan_idx}); continuing eval. Error: {exc}")
+
+    @staticmethod
+    def _pool_imagined_tail(imagined_full, plan_length):
+        """Pool the LAST ``plan_length`` time steps of an unrolled rollout into [plan_length, D_state].
+
+        ``imagined_full`` is the planner's last-CEM-iteration ``unroll`` output
+        with shape ``[tau+plan_len, B, V, H, W, D]`` (visual) plus matching proprio
+        — the leading ``tau`` are the context prefix (encoded init), not imagined.
+        We strip the context prefix and pool each remaining time step independently.
+        """
+        if imagined_full is None or plan_length <= 0:
+            return None
+        if hasattr(imagined_full, "keys"):
+            visual = imagined_full["visual"]
+            proprio = imagined_full["proprio"] if "proprio" in imagined_full.keys() else None
+            tail_v = visual[-plan_length:]
+            tail_v = tail_v.reshape(tail_v.shape[0], -1, tail_v.shape[-1]) if tail_v.ndim > 2 else tail_v
+            pooled_v = tail_v.mean(dim=1) if tail_v.ndim == 3 else tail_v
+            pieces = [pooled_v]
+            if proprio is not None:
+                tail_p = proprio[-plan_length:]
+                tail_p = tail_p.reshape(tail_p.shape[0], -1, tail_p.shape[-1]) if tail_p.ndim > 2 else tail_p
+                pieces.append(tail_p.mean(dim=1) if tail_p.ndim == 3 else tail_p)
+            return torch.cat(pieces, dim=1)
+        # Tensor case (visual-only).
+        tail = imagined_full[-plan_length:]
+        if tail.ndim > 2:
+            tail = tail.reshape(tail.shape[0], -1, tail.shape[-1])
+            return tail.mean(dim=1)
+        return tail
+
+    def _finalize_csa_recorder(self, agent, episode_obses, episode_success):
+        """Encode the real trajectory once, slice per-replan-step, save the dump.
+
+        Wrapped end-to-end in try/except so a recorder/encode bug never
+        terminates a multi-hour MW eval. The dump is best-effort: if any piece
+        of the encode/objective math goes wrong we log + skip the save for
+        this episode.
+        """
+        if getattr(self, "_diag_recorder", None) is None:
+            return
+        if not getattr(self, "_csa_step_pending", None):
+            return
+        try:
+            # Encode the real per-step obses (skip the initial obs since chunk k's
+            # "real" output is the obses produced AFTER the action chunk was applied).
+            real_obs_list = episode_obses[1:]
+            if not real_obs_list:
+                log.warning("CSA recorder: no real obses to encode; skipping dump.")
+                return
+            stacked = torch.stack(real_obs_list).to(agent.device)
+            td = prepare_obs(agent.cfg.task_specification.obs, stacked)
+            real_enc = agent.model.encode(td, act=False)
+
+            cum = 0
+            for step in self._csa_step_pending:
+                n = step["n_real_obs"]
+                real_states_pooled = self._pool_real_chunk(real_enc, cum, n)
+                real_terminal_cost = self._real_terminal_cost(agent, real_enc, cum, n)
+                self._diag_recorder.record_step(
+                    replan_idx=step["replan_idx"],
+                    decision_state=step["decision_state"],
+                    imagined_states=step["imagined_states"],
+                    real_states=real_states_pooled,
+                    selected_actions=step["selected_actions"],
+                    predicted_terminal_cost=step["predicted_terminal_cost"],
+                    real_terminal_cost=real_terminal_cost,
+                    state_dist=step["state_dist"],
+                    step_success=step["step_success"],
+                )
+                cum += n
+
+            # Pool the goal latent once for downstream analysis convenience.
+            try:
+                goal_pooled = compact_state_encoding(agent.goal_state_enc, reduction="mean_tokens")
+                self._diag_recorder.goal_state = goal_pooled.detach().cpu().squeeze(0)
+            except Exception as goal_exc:
+                log.warning(f"CSA recorder: failed to pool goal latent ({goal_exc}); leaving goal_state=None.")
+
+            dump_path = self._csa_dump_dir / DUMP_FILENAME
+            self._diag_recorder.save(dump_path, episode_success=episode_success)
+            log.info(f"CSA recorder: wrote dump → {dump_path}")
+        except Exception as exc:
+            log.warning(f"CSA recorder finalize failed; skipping dump for this episode. Error: {exc}", exc_info=True)
+
+    @staticmethod
+    def _pool_real_chunk(real_enc, start, n):
+        """Pool the ``n`` real obses starting at ``start`` into [n, D_state].
+
+        ``real_enc`` is the batched encode of ``episode_obses[1:]`` with batch
+        dim 0 = step index and dim 1 = tau (frame stack). We slice along dim 0
+        and pool each step's (tau, V, H, W) into a single feature vector.
+        """
+        pieces = []
+        if hasattr(real_enc, "keys"):
+            v = real_enc["visual"][start : start + n]  # [n, tau, 1, 16, 16, D]
+            pieces.append(_compact_per_step(v))
+            if "proprio" in real_enc.keys():
+                p = real_enc["proprio"][start : start + n]  # [n, tau, P, emb]
+                pieces.append(_compact_per_step(p))
+        else:
+            v = real_enc[start : start + n]
+            pieces.append(_compact_per_step(v))
+        return torch.cat(pieces, dim=1).detach().cpu()
+
+    @staticmethod
+    def _real_terminal_cost(agent, real_enc, start, n):
+        """Re-derive the goal-objective value on the REAL terminal latent (planner's units).
+
+        The planner's objective expects ``(T, B, ..., D)`` (unroll's format); we
+        reformat the encoded terminal frame to ``(T=1, B=1, ..., D)`` so we get
+        the same scalar the planner would have reported, just on the real
+        executed terminal instead of the imagined one.
+        """
+        if hasattr(real_enc, "keys"):
+            v_term = real_enc["visual"][start + n - 1 : start + n, -1:]  # [1, 1, V, H, W, D]
+            v_term = v_term.transpose(0, 1).contiguous()  # (T=1, B=1, V, H, W, D)
+            term = {"visual": v_term}
+            if "proprio" in real_enc.keys():
+                p_term = real_enc["proprio"][start + n - 1 : start + n, -1:]
+                p_term = p_term.transpose(0, 1).contiguous()
+                term["proprio"] = p_term
+            from tensordict.tensordict import TensorDict
+
+            term_td = TensorDict(term, batch_size=[])
+        else:
+            v_term = real_enc[start + n - 1 : start + n, -1:]
+            term_td = v_term.transpose(0, 1).contiguous()
+        action_dim = int(getattr(agent.model, "action_dim", 1))
+        dummy_actions = torch.zeros(1, 1, action_dim, device=v_term.device)
+        cost = agent.objective(term_td, dummy_actions)
+        return float(cost.detach().flatten()[0].cpu().item())
 
     def sample_traj_segment_from_dset(
         self,
@@ -496,6 +744,37 @@ class PlanEvaluator:
             for x in expert_obses:
                 x["visual"] = x["visual"][-agent.model.tubelet_size_enc :]
         agent.set_goal(prepare_obs(agent.cfg.task_specification.obs, goal_obs))
+        self._csa_current_ep = ep
+        # CSA full diagnostic recorder: dumps pooled imagined+real rollout latents,
+        # selected actions, and per-step costs per replan step. Scoring + diagnostics
+        # 0-4 run offline in analysis.py against these dumps.
+        self._diag_recorder = None
+        self._csa_step_pending = []
+        self._csa_dump_dir = None
+        self._last_imagined_best = None
+        csa_cfg = _cfg_get(cfg, "csa_diagnostics", None)
+        if _cfg_get(csa_cfg, "enabled", False):
+            dump_dir = _cfg_get(csa_cfg, "dump_dir", None)
+            if dump_dir is None:
+                self._csa_dump_dir = Path(work_dir) / "csa_dumps"
+            else:
+                self._csa_dump_dir = Path(dump_dir) / cfg.tasks[task_idx] / f"ep_{ep}"
+            self._csa_dump_dir.mkdir(parents=True, exist_ok=True)
+            self._diag_recorder = DiagnosticRecorder(
+                episode_id=int(ep),
+                env=str(cfg.tasks[task_idx]),
+                metadata={
+                    "frameskip": int(_cfg_get(cfg, "frameskip", 1)),
+                    "action_skip": int(getattr(agent.model, "action_skip", 1)),
+                    "ckpt_path": str(_cfg_get(cfg, "model_path", "")),
+                    "task": str(cfg.task_specification.task),
+                    "succ_def": str(_cfg_get(cfg.task_specification, "succ_def", "")),
+                    "alpha": float(_cfg_get(cfg.planner.planning_objective, "alpha", 1.0)),
+                    "horizon": int(_cfg_get(cfg.planner, "horizon", -1)),
+                    "num_act_stepped": int(_cfg_get(cfg.planner, "num_act_stepped", -1)),
+                    "objective_type": str(_cfg_get(cfg.planner.planning_objective, "objective_type", "L2")),
+                },
+            )
 
         if cfg.logging.optional_plots and cfg.task_specification.goal_source in ["dset", "expert"]:
             expert_video_path = str(vis_work_dir / f"expert_video")
@@ -528,6 +807,14 @@ class PlanEvaluator:
             self.prev_elite_losses_std.append(agent._prev_elite_losses_std)
             self.prev_pred_frames_over_iterations.append(agent._prev_pred_frames_over_iterations)
             self.predicted_best_encs_over_iterations.append(agent._predicted_best_encs_over_iterations)
+            # Stash the planner's LAST-iteration imagined rollout (unroll output:
+            # [tau+plan_len, B, V, H, W, D]) so the recorder hook can pool the
+            # imagined-state trajectory for diagnostics 0/3/4 without keeping
+            # every CEM iteration's predicted_best_encs in memory.
+            if agent._predicted_best_encs_over_iterations:
+                self._last_imagined_best = agent._predicted_best_encs_over_iterations[-1]
+            else:
+                self._last_imagined_best = None
             return act
 
         episode_obses, ep_reward, planned_actions, infos, success, state_dist = self.unroll_agent(
@@ -537,6 +824,11 @@ class PlanEvaluator:
             agent_actor,
             preprocessor=agent.preprocessor,
         )
+        # Finalize the CSA diagnostic dump (if enabled) BEFORE the optional_plots
+        # block below mutates ``episode_obses[*]["visual"]`` by trimming the frame
+        # stack to ``tubelet_size_enc`` — the recorder needs the full obses to
+        # encode the real trajectory in the same shape the planner saw.
+        self._finalize_csa_recorder(agent, episode_obses, success)
         if "droid" in cfg.task_specification.task:
             success_dist = 0.0
             # first 6 action dims are summable in time and should lead to same delta whatever the path taken if no obstacles

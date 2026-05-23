@@ -227,6 +227,7 @@ class CEMPlanner(Planner):
         num_act_stepped: int = None,
         decode_each_iteration: bool = False,
         decode_unroll: Callable = None,
+        record_selected_plan_cost: bool = False,
         **kwargs,
     ):
         super().__init__(unroll)
@@ -247,6 +248,7 @@ class CEMPlanner(Planner):
         self.num_act_stepped = num_act_stepped
         self.decode_each_iteration = decode_each_iteration
         self.decode_unroll = decode_unroll
+        self.record_selected_plan_cost = record_selected_plan_cost
 
     @torch.no_grad()
     def plan(
@@ -331,6 +333,12 @@ class CEMPlanner(Planner):
 
         self._prev_mean = mean
         a = mean[: self.num_act_stepped]
+        info = {}
+        if self.record_selected_plan_cost:
+            info = {
+                "selected_plan_cost": self.cost_function(mean.unsqueeze(1), z_init).detach().flatten()[0],
+                "selected_plan_actions": mean.detach(),
+            }
         if self.distribute_planner:
             dist.broadcast(a, src=0)
         result = PlanningResult(
@@ -338,6 +346,7 @@ class CEMPlanner(Planner):
             losses=torch.tensor(losses).detach().unsqueeze(-1),
             prev_elite_losses_mean=torch.tensor(elite_means).unsqueeze(-1),
             prev_elite_losses_std=torch.tensor(elite_stds).unsqueeze(-1),
+            info=info,
             pred_frames_over_iterations=pred_frames_over_iterations if self.decode_each_iteration else None,
             predicted_best_encs_over_iterations=predicted_best_encs_over_iterations,
         )
