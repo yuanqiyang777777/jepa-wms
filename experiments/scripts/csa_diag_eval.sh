@@ -52,7 +52,11 @@ python experiments/scripts/csa/make_official_csa_eval_config.py \
   $DUMP_DIR_FLAG
 
 echo ">>> Launching eval on GPU(s) ${CUDA_VISIBLE_DEVICES}"
+# IMPORTANT: do NOT pass --debug here. ``evals/main.py`` with ``--debug``
+# hardcodes ``devices=["cuda:0"]`` and then ``process_main`` *overwrites*
+# CUDA_VISIBLE_DEVICES="0" -- so every parallel csa_diag_eval.sh run lands
+# on physical GPU 0 regardless of GPU_ID. Without --debug, the eval respects
+# ``--devices cuda:N``.
 python -m evals.main \
   --fname "$OUT_YAML" \
-  --debug \
   --devices "cuda:${GPU_ID:-0}"
