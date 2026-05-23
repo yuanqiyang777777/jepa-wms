@@ -29,13 +29,13 @@ reuse ``evals.utils.make_transforms`` via the same config dict the eval reads.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict
 
 import torch
 import yaml
-from omegaconf import OmegaConf
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
@@ -54,17 +54,15 @@ def _load_eval_yaml(path: Path) -> Dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def _resolve_env_vars(text: str) -> str:
-    """Expand ``${VAR}`` from the process environment so config-file refs to
-    ``${JEPAWM_CKPT}`` etc. resolve correctly during the encode pass."""
-    return OmegaConf.to_container(OmegaConf.create({"v": text}), resolve=True)["v"]
-
-
 def _resolve_paths_in_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Resolve every string entry that contains ``${...}``. We only need this
-    for ``checkpoint_folder``; OmegaConf does the rest implicitly."""
+    """Expand any ``${VAR}`` env-var references in path-like config strings.
+
+    Hydra/OmegaConf usually does this for the eval pipeline, but the encode
+    script bypasses Hydra so we expand manually. We only touch the keys that
+    are actually referenced by ``init_module``.
+    """
     if "checkpoint_folder" in cfg and isinstance(cfg["checkpoint_folder"], str):
-        cfg["checkpoint_folder"] = _resolve_env_vars(cfg["checkpoint_folder"])
+        cfg["checkpoint_folder"] = os.path.expandvars(cfg["checkpoint_folder"])
     return cfg
 
 
