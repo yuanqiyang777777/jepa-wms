@@ -163,7 +163,7 @@ def encode_train_split(
     ``[N, D_state]`` + ``[N, A]`` tensors. ``N <= max_samples``."""
     cfg = _resolve_paths_in_cfg(dict(cfg))  # shallow copy + resolve
 
-    train_slicer, _train_traj_dset, preprocessor = build_train_slicer(
+    train_slicer, train_traj_dset, preprocessor = build_train_slicer(
         cfg, filter_first_episodes=filter_first_episodes
     )
 
@@ -174,6 +174,12 @@ def encode_train_split(
     cfgs_data = model_kwargs["data"]
     checkpoint = model_kwargs.get("checkpoint")
     checkpoint_folder = cfg.get("checkpoint_folder", "")
+    # ``init_module`` derives the model's action dim as
+    # ``raw_action_dim * tubelet_size_enc * frameskip // action_skip``. Pass
+    # the *raw* env action dim from the trajectory (not the slicer's
+    # frameskip-concatenated dim), to match how the released checkpoint was
+    # trained -- otherwise the predictor's action_encoder.weight shape
+    # disagrees with the checkpoint and load_state_dict raises.
     model = init_module(
         folder=checkpoint_folder,
         checkpoint=checkpoint,
@@ -182,8 +188,8 @@ def encode_train_split(
         wrapper_kwargs=wrapper_kwargs,
         cfgs_data=cfgs_data,
         device=device,
-        action_dim=train_slicer.action_dim,
-        proprio_dim=train_slicer.proprio_dim,
+        action_dim=train_traj_dset.action_dim,
+        proprio_dim=train_traj_dset.proprio_dim,
         preprocessor=preprocessor,
     )
     model.eval()
