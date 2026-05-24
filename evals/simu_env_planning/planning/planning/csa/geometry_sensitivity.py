@@ -425,6 +425,163 @@ def quadrant_census(
 
 
 # --------------------------------------------------------------------------
+# Diagnostic 6 (scorer-validity probes) re-run inside each geometry variant.
+# --------------------------------------------------------------------------
+
+_NOISE_PEARSON_THRESHOLD = 0.10
+
+
+def _pearson(x: torch.Tensor, y: torch.Tensor) -> Optional[float]:
+    if x.numel() < 2 or y.numel() < 2:
+        return None
+    x = x.to(torch.float32) - x.to(torch.float32).mean()
+    y = y.to(torch.float32) - y.to(torch.float32).mean()
+    denom = torch.linalg.vector_norm(x) * torch.linalg.vector_norm(y)
+    if denom.item() <= 1e-12:
+        return None
+    return float((x * y).sum().item() / denom.item())
+
+
+def _spearman(x: torch.Tensor, y: torch.Tensor) -> Optional[float]:
+    if x.numel() < 2 or y.numel() < 2:
+        return None
+
+    def _rank(z: torch.Tensor) -> torch.Tensor:
+        order = torch.argsort(z)
+        ranks = torch.empty_like(order, dtype=torch.float32)
+        ranks[order] = torch.arange(z.numel(), dtype=torch.float32)
+        return ranks
+
+    return _pearson(_rank(x), _rank(y))
+
+
+def scorer_validity_probes(
+    u_state: torch.Tensor,
+    u_action: torch.Tensor,
+    rollout_error: torch.Tensor,
+    depth: torch.Tensor,
+    *,
+    beta: float = 1.0,
+    state_familiar_quantile: float = 0.50,
+) -> Dict[str, Any]:
+    """Diagnostic-6-shaped per-modality, per-rollout-depth Pearson + Spearman
+    of (U_state, U_action, U_SA) against rollout_error, conditioned on the
+    state-familiar subset (same quantile as diag-2 primary). Returns a verdict
+    block that the per-variant report can use to flag PCA-style sign artifacts.
+
+    Use this on the rollout-only subset (depth >= 1, finite rollout_error)
+    so it's directly comparable to the analysis.py diag-6 output.
+    """
+    finite = torch.isfinite(rollout_error)
+    rollout_mask = (depth >= 1) & finite
+    if int(rollout_mask.sum().item()) < 2:
+        return {"status": "not_computed", "reason": "fewer than 2 imagined-rollout records with finite error"}
+
+    us = u_state[rollout_mask]
+    ua = u_action[rollout_mask]
+    ucsa = us + beta * ua
+    err = rollout_error[rollout_mask]
+    d_sub = depth[rollout_mask]
+
+    state_thr = float(torch.quantile(us, state_familiar_quantile).item())
+    familiar_mask = us <= state_thr
+
+    def _corrs(s, a, c, e):
+        if s.numel() < 2:
+            return {
+                "pearson_state": None, "spearman_state": None,
+                "pearson_action": None, "spearman_action": None,
+                "pearson_csa": None, "spearman_csa": None,
+            }
+        return {
+            "pearson_state": _pearson(s, e),
+            "spearman_state": _spearman(s, e),
+            "pearson_action": _pearson(a, e),
+            "spearman_action": _spearman(a, e),
+            "pearson_csa": _pearson(c, e),
+            "spearman_csa": _spearman(c, e),
+        }
+
+    unconditioned = _corrs(us, ua, ucsa, err)
+    if int(familiar_mask.sum().item()) >= 2:
+        conditioned = _corrs(us[familiar_mask], ua[familiar_mask], ucsa[familiar_mask], err[familiar_mask])
+    else:
+        conditioned = _corrs(torch.empty(0), torch.empty(0), torch.empty(0), torch.empty(0))
+
+    by_depth: Dict[str, Any] = {}
+    for d in sorted({int(x.item()) for x in d_sub}):
+        d_mask = (d_sub == d) & familiar_mask
+        count = int(d_mask.sum().item())
+        if count < 2:
+            by_depth[f"depth_{d}"] = {"count": count}
+            continue
+        by_depth[f"depth_{d}"] = {
+            "count": count,
+            **_corrs(us[d_mask], ua[d_mask], ucsa[d_mask], err[d_mask]),
+        }
+
+    def _summary(metric_key: str) -> Dict[str, Any]:
+        vals = [
+            d_data[metric_key]
+            for d_data in by_depth.values()
+            if d_data.get(metric_key) is not None
+        ]
+        if not vals:
+            return {
+                "depths_with_data": 0,
+                "all_positive": None,
+                "all_negative": None,
+                "all_same_sign": None,
+                "values": [],
+            }
+        return {
+            "depths_with_data": len(vals),
+            "all_positive": bool(all(v > 0 for v in vals)),
+            "all_negative": bool(all(v < 0 for v in vals)),
+            "all_same_sign": bool(all(v > 0 for v in vals) or all(v < 0 for v in vals)),
+            "values": [round(float(v), 4) for v in vals],
+        }
+
+    sign_consistency = {
+        "pearson_state": _summary("pearson_state"),
+        "pearson_action": _summary("pearson_action"),
+        "pearson_csa": _summary("pearson_csa"),
+    }
+
+    def _wrong(mkey: str) -> bool:
+        s = sign_consistency[mkey]
+        return bool(s["depths_with_data"] >= 2 and s["all_negative"])
+
+    noise_only = True
+    for mkey in ("pearson_state", "pearson_action", "pearson_csa"):
+        for v in sign_consistency[mkey]["values"]:
+            if abs(v) >= _NOISE_PEARSON_THRESHOLD:
+                noise_only = False
+                break
+        if not noise_only:
+            break
+
+    return {
+        "status": "computed",
+        "state_familiar_quantile": state_familiar_quantile,
+        "state_threshold": state_thr,
+        "subset_size_familiar": int(familiar_mask.sum().item()),
+        "subset_size_total": int(us.numel()),
+        "unconditioned": unconditioned,
+        "conditioned_overall": conditioned,
+        "by_depth": by_depth,
+        "sign_consistency": sign_consistency,
+        "verdict": {
+            "scorer_wrong_signed_csa": _wrong("pearson_csa"),
+            "scorer_wrong_signed_action": _wrong("pearson_action"),
+            "scorer_wrong_signed_state": _wrong("pearson_state"),
+            "scorer_noise_only": noise_only,
+            "noise_pearson_threshold": _NOISE_PEARSON_THRESHOLD,
+        },
+    }
+
+
+# --------------------------------------------------------------------------
 # Top-level: run the sweep over variants for one env's data.
 # --------------------------------------------------------------------------
 
@@ -586,6 +743,17 @@ def run_geometry_sensitivity(
         else:
             rollout = {"status": "not_computed", "reason": "no rollout records"}
 
+        # Diag-6-style scorer validity probes under THIS variant's geometry.
+        # Runs on the rollout subset (depth>=1, finite error); reports
+        # per-modality Pearson/Spearman per depth + a sign-consistency
+        # verdict. Lets us cross-check whether the diag-6 wrong-signed CSA
+        # on Wall was a PCA-64 artifact.
+        validity_probes = scorer_validity_probes(
+            u_state=u_state, u_action=u_action,
+            rollout_error=rollout_error, depth=depth,
+            state_familiar_quantile=state_familiar_quantile,
+        )
+
         out["variants"][variant.name] = {
             "variant": {
                 "name": variant.name,
@@ -604,6 +772,7 @@ def run_geometry_sensitivity(
             "census_all_queries": full,
             "census_decision_steps_only": decision,
             "census_rollout_only": rollout,
+            "scorer_validity_probes": validity_probes,
         }
 
     out["status"] = "computed"

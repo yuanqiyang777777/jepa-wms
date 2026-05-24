@@ -44,6 +44,7 @@ from evals.simu_env_planning.planning.planning.csa.geometry_sensitivity import (
     quadrant_census,
     run_geometry_sensitivity,
     score_queries,
+    scorer_validity_probes,
 )
 from evals.simu_env_planning.planning.planning.csa.support_memory import SupportMemory
 from evals.simu_env_planning.planning.planning.csa.support_scorer import ConditionalSupportScorer
@@ -1072,7 +1073,7 @@ def test_run_geometry_sensitivity_produces_report_for_all_variants():
     # Primary variant flag plumbed through.
     primary = [name for name, b in report["variants"].items() if b["variant"]["is_primary_no_pca_variant"]]
     assert set(primary) == set(PRIMARY_VARIANT_NAMES)
-    # Each variant has all three slice censuses.
+    # Each variant has all three slice censuses + scorer-validity probes.
     for vname, vblock in report["variants"].items():
         for slice_key in ("census_all_queries", "census_decision_steps_only", "census_rollout_only"):
             assert slice_key in vblock, f"{vname} missing {slice_key}"
@@ -1088,6 +1089,47 @@ def test_run_geometry_sensitivity_produces_report_for_all_variants():
         }
         # Interpretation flag (dominant failure quadrant) present.
         assert "dominant_failure_quadrant" in all_census
+
+        # Per-variant scorer-validity (diag-6) re-run is attached.
+        probes = vblock["scorer_validity_probes"]
+        assert "status" in probes
+        if probes["status"] == "computed":
+            for k in ("unconditioned", "conditioned_overall", "by_depth",
+                      "sign_consistency", "verdict"):
+                assert k in probes, f"{vname}.scorer_validity_probes missing {k}"
+            for vk in ("scorer_wrong_signed_csa", "scorer_wrong_signed_action",
+                       "scorer_wrong_signed_state", "scorer_noise_only"):
+                assert vk in probes["verdict"]
+
+
+def test_scorer_validity_probes_returns_not_computed_for_too_few_rollout_records():
+    """Same edge case as analysis._diagnostic_6: depth<1 entries are skipped,
+    so a single-decision-step query batch yields not_computed."""
+    u_state = torch.tensor([0.5, 0.6, 0.7])
+    u_action = torch.tensor([0.1, 0.2, 0.3])
+    err = torch.tensor([float("nan"), float("nan"), float("nan")])  # no finite rollout error
+    depth = torch.tensor([0, 0, 0])
+    out = scorer_validity_probes(u_state, u_action, err, depth)
+    assert out["status"] == "not_computed"
+
+
+def test_scorer_validity_probes_reports_signed_correlation_per_modality():
+    """Construct rollout queries where higher U_action correlates positively
+    with rollout_error; verify Pearson sign comes out positive on every depth."""
+    torch.manual_seed(20)
+    n_per_depth = 30
+    n_depths = 4
+    u_action = torch.cat([torch.linspace(0.0, 1.0, n_per_depth) for _ in range(n_depths)])
+    err = u_action + 0.05 * torch.randn(n_per_depth * n_depths)
+    u_state = torch.rand(n_per_depth * n_depths) * 0.5  # all "state-familiar"
+    depth = torch.cat([torch.full((n_per_depth,), d, dtype=torch.long) for d in range(1, n_depths + 1)])
+    out = scorer_validity_probes(u_state, u_action, err, depth, state_familiar_quantile=0.50)
+    assert out["status"] == "computed"
+    sc = out["sign_consistency"]["pearson_action"]
+    assert sc["depths_with_data"] >= 2
+    # Construction guarantees positive correlation per depth.
+    assert sc["all_positive"] is True
+    assert out["verdict"]["scorer_wrong_signed_action"] is False
 
 
 def test_run_geometry_sensitivity_reports_status_when_no_queries():
