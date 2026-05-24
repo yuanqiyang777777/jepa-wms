@@ -35,6 +35,16 @@ from evals.simu_env_planning.planning.planning.csa.diagnostic_recorder import (
     load_episode_dumps,
 )
 from evals.simu_env_planning.planning.planning.csa.feature_adapter import PCAWhiteningAdapter
+from evals.simu_env_planning.planning.planning.csa.geometry_sensitivity import (
+    DEFAULT_VARIANTS,
+    GeometryVariant,
+    PRIMARY_VARIANT_NAMES,
+    QUADRANT_LABELS,
+    build_calibrated_memory,
+    quadrant_census,
+    run_geometry_sensitivity,
+    score_queries,
+)
 from evals.simu_env_planning.planning.planning.csa.support_memory import SupportMemory
 from evals.simu_env_planning.planning.planning.csa.support_scorer import ConditionalSupportScorer
 
@@ -905,3 +915,190 @@ def test_build_support_memory_random_sampling_is_seeded_and_reproducible(tmp_pat
     assert memory_a.metadata["sample_seed"] == 123
     assert memory_a.metadata["state_reduction"] == "mean_tokens"
     assert not torch.allclose(memory_a.actions, actions[:6])
+
+
+# --------------------------------------------------------------------------
+# Geometry sensitivity analysis -- 6 variants of (PCA dim, whiten, calibration).
+# --------------------------------------------------------------------------
+
+def test_geometry_sensitivity_default_variants_cover_required_axes():
+    """The user-spec 6 variants. raw_recipRMS + raw_identity must be marked
+    PRIMARY (no-PCA, the anchors for the final Go/No-Go)."""
+    names = [v.name for v in DEFAULT_VARIANTS]
+    assert names == [
+        "raw_recipRMS", "pca64_white_recipRMS",
+        "pca128_nowhite_recipRMS", "pca128_white_recipRMS",
+        "pca64_white_identity", "raw_identity",
+    ]
+    pca_dims = [v.pca_dim for v in DEFAULT_VARIANTS]
+    whitens = [v.whiten for v in DEFAULT_VARIANTS]
+    cals = [v.calibration for v in DEFAULT_VARIANTS]
+    assert None in pca_dims and 64 in pca_dims and 128 in pca_dims  # geometry axis covered
+    assert True in whitens and False in whitens                      # whitening axis covered
+    assert "reciprocal_rms" in cals and "identity" in cals           # calibration axis covered
+    assert set(PRIMARY_VARIANT_NAMES) == {"raw_recipRMS", "raw_identity"}
+
+
+def test_build_calibrated_memory_handles_no_pca_and_pca_variants():
+    """For each variant, the resulting memory's state_dim matches the variant's
+    geometry choice (raw -> input dim; pca_K -> K)."""
+    torch.manual_seed(10)
+    raw_states = torch.randn(60, 8)
+    raw_actions = torch.randn(60, 2)
+    for variant in DEFAULT_VARIANTS:
+        memory = build_calibrated_memory(raw_states, raw_actions, variant)
+        if variant.pca_dim is None:
+            assert memory.state_features.shape == (60, 8), variant.name
+            assert memory.state_adapter is None, variant.name
+        else:
+            assert memory.state_features.shape[0] == 60
+            assert memory.state_features.shape[1] == min(variant.pca_dim, 8)
+            assert memory.state_adapter is not None
+        # Calibration: identity yields scalar 1.0; reciprocal_rms yields a strictly positive scalar.
+        if variant.calibration == "identity":
+            assert memory.state_scale == 1.0
+            assert memory.action_scale == 1.0
+        else:
+            assert memory.state_scale > 0
+            assert memory.action_scale > 0
+
+
+def test_score_queries_separates_supported_from_unsupported_under_raw_variant():
+    """On a tiny synthetic memory the raw scorer should rank a near-memory
+    query as low U_state and a far-memory query as high U_state -- same for
+    action conditional on a near-memory state."""
+    torch.manual_seed(11)
+    raw_states = torch.cat([torch.zeros(20, 4), torch.full((20, 4), 5.0)], dim=0)
+    raw_actions = torch.cat([torch.zeros(20, 2), torch.full((20, 2), 1.0)], dim=0)
+    memory = build_calibrated_memory(
+        raw_states, raw_actions,
+        GeometryVariant("raw_id", pca_dim=None, whiten=False, calibration="identity"),
+    )
+    near_state = torch.tensor([[0.05, 0.05, 0.05, 0.05]])
+    far_state = torch.tensor([[5.05, 5.05, 5.05, 5.05]])
+    matching_action = torch.tensor([[0.0, 0.0]])
+    foreign_action = torch.tensor([[1.0, 1.0]])
+
+    u_state_near, u_action_near = score_queries(near_state, matching_action, memory, state_k=4, action_k=4)
+    u_state_far, _ = score_queries(far_state, matching_action, memory, state_k=4, action_k=4)
+    _, u_action_far_action = score_queries(near_state, foreign_action, memory, state_k=4, action_k=4)
+
+    # State near memory -> low U_state; far -> high U_state.
+    assert u_state_near.item() < u_state_far.item()
+    # Conditional on state-near, the matching action is low U_action; foreign is higher.
+    assert u_action_near.item() < u_action_far_action.item()
+
+
+def test_quadrant_census_produces_q1_q2_q3_q4_with_correct_semantics():
+    """Construct deterministic queries placed in each of the 4 quadrants and
+    verify the census reports them in the right cell with the right labels."""
+    # 40 queries: 10 per quadrant. State-familiar quantile=0.50, action quantile=0.75
+    # but we'll set the quantiles so the threshold lands cleanly between groups.
+    u_state = torch.tensor([0.1] * 20 + [0.9] * 20)            # 0.5-quantile -> 0.5
+    u_action = torch.tensor([0.1] * 10 + [0.9] * 10 + [0.1] * 10 + [0.9] * 10)  # 0.5-quantile -> 0.5
+    # Failures concentrated in Q2: state_familiar (low) & action_unfamiliar (high)
+    is_failure = torch.tensor([False] * 10 + [True] * 10 + [False] * 10 + [False] * 10)
+    rollout_error = torch.tensor([0.01] * 10 + [0.99] * 10 + [0.05] * 10 + [0.10] * 10)
+    out = quadrant_census(
+        u_state, u_action, is_failure, rollout_error,
+        state_familiar_quantile=0.50, action_unsupported_quantile=0.50,
+    )
+
+    per_q = out["per_quadrant_all_decision_steps"]
+    # Each quadrant has 10 queries (with the quantile=0.5 mapping above).
+    for q in QUADRANT_LABELS:
+        assert per_q[q]["count"] == 10, q
+
+    # Q2 is the all-failures cell. Its failure rate should be 1.0; others 0.
+    assert per_q["Q2_familiar_unfamiliar"]["failure_rate"] == 1.0
+    for q in ("Q1_familiar_familiar", "Q3_unfamiliar_familiar", "Q4_unfamiliar_unfamiliar"):
+        assert per_q[q]["failure_rate"] == 0.0
+
+    # Q2 mean error > Q1 mean error => mean_error_ratio_vs_Q1 > 1 for Q2.
+    err_ratios = out["mean_error_ratio_vs_Q1"]
+    assert err_ratios["Q2_familiar_unfamiliar"] > 1.0
+
+    # Enrichment: Q2 is in failures but not in successes; enrichment is large.
+    enrich = out["enrichment_failed_over_successful"]
+    # Successes are spread across Q1, Q3, Q4 evenly (10 each). Failures are all Q2.
+    # P(Q2 | failure) = 1.0, P(Q2 | success) = 0 -> enrichment is None (safe-guard for ps=0).
+    assert enrich["Q2_familiar_unfamiliar"] is None  # success share is 0
+    # Q1, Q3, Q4 are 1/3 each in successes; 0 in failures -> enrichment = 0
+    assert enrich["Q1_familiar_familiar"] == 0.0
+    assert enrich["Q3_unfamiliar_familiar"] == 0.0
+    assert enrich["Q4_unfamiliar_unfamiliar"] == 0.0
+
+    # Dominant failure quadrant: when Q2 enrichment is None it can't win; pick a
+    # case where some failures exist outside Q2 too, so enrichment is finite.
+    is_failure2 = torch.tensor([False] * 5 + [True] * 5    # 5 failures in Q1, 5 not
+                                + [False] * 5 + [True] * 5  # 5 failures in Q2
+                                + [False] * 10              # Q3 all success
+                                + [False] * 10)             # Q4 all success
+    out2 = quadrant_census(
+        u_state, u_action, is_failure2, rollout_error,
+        state_familiar_quantile=0.50, action_unsupported_quantile=0.50,
+    )
+    enrich2 = out2["enrichment_failed_over_successful"]
+    # Q1 in success: 5/20 = 0.25; in failure: 5/10 = 0.5 -> enrichment 2.0
+    # Q2 same: 5/20 = 0.25 in success, 5/10 = 0.5 in failure -> enrichment 2.0
+    assert enrich2["Q1_familiar_familiar"] is not None
+    assert enrich2["Q2_familiar_unfamiliar"] is not None
+
+
+def test_run_geometry_sensitivity_produces_report_for_all_variants():
+    """End-to-end: build synthetic dumps + raw support data, run the full
+    sweep, and check every variant slot is populated with Q1-Q4 censuses."""
+    torch.manual_seed(12)
+    d_state, action_dim = 8, 2
+    raw_support_states = torch.randn(200, d_state)
+    raw_support_actions = torch.randn(200, action_dim)
+    dumps = [
+        _make_synthetic_dump(episode_id=0, env="wall", episode_success=False,
+                             num_steps=2, depth=4, d_state=d_state, action_dim=action_dim),
+        _make_synthetic_dump(episode_id=1, env="wall", episode_success=True,
+                             num_steps=2, depth=4, d_state=d_state, action_dim=action_dim),
+        _make_synthetic_dump(episode_id=2, env="wall", episode_success=False,
+                             num_steps=2, depth=4, d_state=d_state, action_dim=action_dim),
+    ]
+    report = run_geometry_sensitivity(
+        raw_support_states=raw_support_states,
+        raw_support_actions=raw_support_actions,
+        dumps=dumps,
+        state_k=8, action_k=8,
+        pca_fit_samples=None,
+    )
+    assert report["status"] == "computed"
+    assert set(report["variants"].keys()) == {v.name for v in DEFAULT_VARIANTS}
+    # Primary variant flag plumbed through.
+    primary = [name for name, b in report["variants"].items() if b["variant"]["is_primary_no_pca_variant"]]
+    assert set(primary) == set(PRIMARY_VARIANT_NAMES)
+    # Each variant has all three slice censuses.
+    for vname, vblock in report["variants"].items():
+        for slice_key in ("census_all_queries", "census_decision_steps_only", "census_rollout_only"):
+            assert slice_key in vblock, f"{vname} missing {slice_key}"
+        all_census = vblock["census_all_queries"]
+        # Q1-Q4 keys present + each carries a count.
+        per_q = all_census["per_quadrant_all_decision_steps"]
+        for q in QUADRANT_LABELS:
+            assert q in per_q
+            assert "count" in per_q[q]
+        # by-outcome contains the 3 expected slices.
+        assert set(all_census["by_outcome"].keys()) == {
+            "all_decision_steps", "successful_episodes", "failed_episodes"
+        }
+        # Interpretation flag (dominant failure quadrant) present.
+        assert "dominant_failure_quadrant" in all_census
+
+
+def test_run_geometry_sensitivity_reports_status_when_no_queries():
+    """Empty dump list -> status="not_computed", clean reason; doesn't crash."""
+    raw_support_states = torch.randn(20, 4)
+    raw_support_actions = torch.randn(20, 2)
+    report = run_geometry_sensitivity(
+        raw_support_states=raw_support_states,
+        raw_support_actions=raw_support_actions,
+        dumps=[],
+        state_k=4, action_k=4,
+    )
+    assert report["status"] == "not_computed"
+    assert "no queries" in report["reason"]
