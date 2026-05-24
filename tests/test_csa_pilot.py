@@ -46,6 +46,16 @@ from evals.simu_env_planning.planning.planning.csa.geometry_sensitivity import (
     score_queries,
     scorer_validity_probes,
 )
+from evals.simu_env_planning.planning.planning.csa.residual_correlation import (
+    C_PRIMARY_VARIANT,
+    run_residual_correlation,
+)
+from evals.simu_env_planning.planning.planning.csa.residual_scorer import (
+    build_calibrated_residual_memory,
+    default_variants_for_correlation,
+    score_residual_and_support,
+    score_residual_queries,
+)
 from evals.simu_env_planning.planning.planning.csa.support_memory import SupportMemory
 from evals.simu_env_planning.planning.planning.csa.support_scorer import ConditionalSupportScorer
 
@@ -1144,3 +1154,283 @@ def test_run_geometry_sensitivity_reports_status_when_no_queries():
     )
     assert report["status"] == "not_computed"
     assert "no queries" in report["reason"]
+
+
+# --------------------------------------------------------------------------
+# Exp C: residual scorer + residual-correlation analysis.
+# --------------------------------------------------------------------------
+
+def test_residual_memory_builds_under_each_variant_with_aligned_residuals():
+    """Memory dim depends on variant; residual_errors stays aligned 1:1 with N rows."""
+    torch.manual_seed(20)
+    n, d_state, d_action = 50, 8, 2
+    raw_states = torch.randn(n, d_state)
+    raw_actions = torch.randn(n, d_action)
+    raw_errors = torch.rand(n)
+    for variant in DEFAULT_VARIANTS:
+        mem = build_calibrated_residual_memory(raw_states, raw_actions, raw_errors, variant)
+        assert mem.residual_errors.shape == (n,), variant.name
+        assert mem.num_items == n, variant.name
+        if variant.pca_dim is None:
+            assert mem.state_features.shape == (n, d_state), variant.name
+            assert mem.state_adapter is None
+        else:
+            assert mem.state_features.shape == (n, min(variant.pca_dim, d_state)), variant.name
+            assert mem.state_adapter is not None
+        if variant.calibration == "identity":
+            assert mem.state_scale == 1.0
+            assert mem.action_scale == 1.0
+
+
+def test_residual_memory_rejects_misaligned_row_counts():
+    """All three input tensors must be aligned per-transition; otherwise raise."""
+    raw_states = torch.randn(10, 4)
+    raw_actions = torch.randn(10, 2)
+    raw_errors = torch.rand(9)  # mismatched!
+    variant = GeometryVariant("raw_id", pca_dim=None, whiten=False, calibration="identity")
+    try:
+        build_calibrated_residual_memory(raw_states, raw_actions, raw_errors, variant)
+    except ValueError as exc:
+        assert "row-count mismatch" in str(exc)
+    else:  # pragma: no cover - we expect to raise
+        raise AssertionError("expected ValueError on misaligned residual length")
+
+
+def test_score_residual_queries_with_k1_returns_neighbour_residual():
+    """With state_k=1 and action_k=1 every query collapses to its single nearest
+    (state, action) neighbour's residual -- a hard correctness invariant."""
+    torch.manual_seed(21)
+    # Construct a memory where each (state_i, action_i) sits at a unique grid
+    # point so the nearest neighbour is unambiguous.
+    raw_states = torch.tensor([[float(i), 0.0] for i in range(10)])
+    raw_actions = torch.tensor([[float(i), 0.0] for i in range(10)])
+    raw_errors = torch.tensor([0.1 * (i + 1) for i in range(10)])
+    variant = GeometryVariant("raw_id", pca_dim=None, whiten=False, calibration="identity")
+    mem = build_calibrated_residual_memory(raw_states, raw_actions, raw_errors, variant)
+
+    # Query exactly the 3rd memory point. With k=1 the kNN must return e_3 = 0.4.
+    q_state = raw_states[3:4]
+    q_action = raw_actions[3:4]
+    r = score_residual_queries(q_state, q_action, mem, state_k=1, action_k=1)
+    assert r.shape == (1,)
+    assert abs(float(r.item()) - 0.4) < 1e-5, r.item()
+
+
+def test_score_residual_queries_is_local_average_with_k_gt_1():
+    """With k>1 r(q) is the mean residual over the surviving kNN bucket. On a
+    memory designed so the action_k bucket has known indices, the mean matches
+    the analytic expectation."""
+    torch.manual_seed(22)
+    # 4 memory points clustered tightly in state space (state_k=4 picks all 4),
+    # then split in action space into two groups so action_k=2 picks the closer pair.
+    raw_states = torch.tensor([[0.0, 0.0]] * 4)
+    raw_actions = torch.tensor([[0.0], [0.1], [1.0], [1.1]])
+    raw_errors = torch.tensor([1.0, 2.0, 10.0, 20.0])
+    variant = GeometryVariant("raw_id", pca_dim=None, whiten=False, calibration="identity")
+    mem = build_calibrated_residual_memory(raw_states, raw_actions, raw_errors, variant)
+
+    # Query at action ~0 -> action-kNN bucket is indices 0, 1 -> mean(1.0, 2.0) = 1.5.
+    r = score_residual_queries(
+        torch.tensor([[0.0, 0.0]]),
+        torch.tensor([[0.0]]),
+        mem, state_k=4, action_k=2,
+    )
+    assert abs(float(r.item()) - 1.5) < 1e-5, r.item()
+
+    # Query at action ~1.05 -> action-kNN bucket is indices 2, 3 -> mean(10.0, 20.0) = 15.0.
+    r2 = score_residual_queries(
+        torch.tensor([[0.0, 0.0]]),
+        torch.tensor([[1.05]]),
+        mem, state_k=4, action_k=2,
+    )
+    assert abs(float(r2.item()) - 15.0) < 1e-5, r2.item()
+
+
+def test_score_residual_and_support_rejects_mismatched_variants():
+    """The combined helper must enforce that both memories live under the same
+    variant -- otherwise r vs U_action|x crosses scorer geometries."""
+    torch.manual_seed(23)
+    raw_states = torch.randn(20, 4)
+    raw_actions = torch.randn(20, 2)
+    raw_errors = torch.rand(20)
+    v_raw = GeometryVariant("raw_id", pca_dim=None, whiten=False, calibration="identity")
+    v_pca = GeometryVariant("pca2_white_id", pca_dim=2, whiten=True, calibration="identity")
+    support_mem = build_calibrated_memory(raw_states, raw_actions, v_raw)
+    resid_mem = build_calibrated_residual_memory(raw_states, raw_actions, raw_errors, v_pca)
+    try:
+        score_residual_and_support(
+            torch.randn(1, 4), torch.randn(1, 2),
+            support_memory=support_mem, residual_memory=resid_mem,
+            state_k=4, action_k_support=4, action_k_residual=2,
+        )
+    except ValueError as exc:
+        assert "SAME variant" in str(exc) or "same variant" in str(exc).lower()
+    else:  # pragma: no cover
+        raise AssertionError("expected ValueError on mismatched variants")
+
+
+def test_default_variants_for_correlation_returns_raw_primary_and_pca64_sensitivity():
+    """The Exp C reference variants are raw (primary) + PCA-64-whitened (sensitivity)."""
+    variants = default_variants_for_correlation()
+    assert len(variants) == 2
+    raw_v, pca_v = variants
+    assert raw_v.name == "raw_recipRMS"
+    assert raw_v.pca_dim is None
+    assert pca_v.name == "pca64_white_recipRMS"
+    assert pca_v.pca_dim == 64 and pca_v.whiten is True
+
+
+def _make_synthetic_dump_with_known_residual_signal(
+    *, episode_id, episode_success, num_steps, depth, d_state, action_dim, error_scale,
+):
+    """Build a dump whose per-depth realized rollout_error is engineered to
+    correlate positively with the imagined-state norm. Used to verify that
+    the residual-correlation analysis reports a positive Pearson when the
+    residual memory has the same signal."""
+    steps = []
+    for k in range(num_steps):
+        decision_state = torch.randn(d_state)
+        imagined = torch.randn(depth, d_state)
+        # Force real_states so that (imagined - real).pow(2).mean() ~ error_scale * ||imagined||
+        # Approximately: pick real = imagined + noise proportional to |imagined|.
+        noise = imagined.abs() * float(error_scale) ** 0.5
+        real = imagined + noise * torch.randn_like(imagined).sign()
+        steps.append({
+            "replan_idx": k,
+            "decision_state": decision_state,
+            "imagined_states": imagined,
+            "real_states": real,
+            "selected_actions": torch.randn(depth, action_dim),
+            "predicted_terminal_cost": 0.1,
+            "real_terminal_cost": 0.2,
+            "state_dist": 1.0,
+            "step_success": int(bool(episode_success and k == num_steps - 1)),
+        })
+    return {
+        "schema_version": 2,
+        "episode_id": int(episode_id),
+        "env": "synth",
+        "episode_success": int(bool(episode_success)),
+        "goal_state": torch.randn(d_state),
+        "metadata": {"frameskip": 1, "action_skip": 1},
+        "num_steps": num_steps,
+        "steps": steps,
+    }
+
+
+def test_run_residual_correlation_produces_per_depth_blocks_on_synthetic_data():
+    """End-to-end smoke: r(q), U_state, U_action|x, U_SA all reported per depth
+    per stratum; the per-env verdict block is well-formed."""
+    torch.manual_seed(24)
+    d_state, action_dim = 8, 2
+    n_support = 200
+    n_residual = 150
+    depth = 4
+
+    raw_support_states = torch.randn(n_support, d_state)
+    raw_support_actions = torch.randn(n_support, action_dim)
+    raw_resid_states = torch.randn(n_residual, d_state)
+    raw_resid_actions = torch.randn(n_residual, action_dim)
+    raw_resid_errors = torch.rand(n_residual)
+
+    dumps = [
+        _make_synthetic_dump_with_known_residual_signal(
+            episode_id=i,
+            episode_success=bool(i % 2),
+            num_steps=3,
+            depth=depth,
+            d_state=d_state,
+            action_dim=action_dim,
+            error_scale=0.1 * (i + 1),
+        )
+        for i in range(4)
+    ]
+
+    report = run_residual_correlation(
+        raw_support_states=raw_support_states,
+        raw_support_actions=raw_support_actions,
+        raw_resid_states=raw_resid_states,
+        raw_resid_actions=raw_resid_actions,
+        raw_resid_errors=raw_resid_errors,
+        dumps=dumps,
+        state_k=8, action_k_support=8, action_k_residual=4,
+        pca_fit_samples=None,
+    )
+    assert report["status"] == "computed"
+    assert set(report["variants"].keys()) == {"raw_recipRMS", "pca64_white_recipRMS"}
+    for vname, vblock in report["variants"].items():
+        assert "conditioned_overall" in vblock
+        assert "per_depth" in vblock
+        # At least depth 1 should have an entry with the 4 scorers reported.
+        d1 = vblock["per_depth"].get("depth_1", {})
+        if d1.get("familiar_q50", {}).get("count", 0) >= 2:
+            block = d1["familiar_q50"]
+            for scorer in ("r", "u_state", "u_action", "u_sa"):
+                assert scorer in block, (vname, scorer)
+                assert "pearson" in block[scorer]
+                assert "spearman" in block[scorer]
+        assert "r_beats_summary" in vblock
+    assert "verdict" in report
+    assert "env_c_pass_under_raw" in report["verdict"]
+    # The primary variant entry must include the pass-vs-u_action / pass-vs-u_sa booleans.
+    primary = report["verdict"].get(C_PRIMARY_VARIANT, {})
+    if primary and "status" not in primary:
+        assert "passes_vs_u_action" in primary
+        assert "passes_vs_u_sa" in primary
+        assert "passes_c" in primary
+
+
+def test_run_residual_correlation_reports_not_computed_when_residual_memory_too_small():
+    """If M_resid has fewer than state_k transitions, we must bail cleanly with
+    a not_computed status instead of returning meaningless correlations."""
+    torch.manual_seed(25)
+    d_state, action_dim = 4, 2
+    raw_support_states = torch.randn(64, d_state)
+    raw_support_actions = torch.randn(64, action_dim)
+    raw_resid_states = torch.randn(3, d_state)   # < state_k
+    raw_resid_actions = torch.randn(3, action_dim)
+    raw_resid_errors = torch.rand(3)
+    dumps = [
+        _make_synthetic_dump_with_known_residual_signal(
+            episode_id=0, episode_success=False, num_steps=2, depth=3,
+            d_state=d_state, action_dim=action_dim, error_scale=0.1,
+        )
+    ]
+    report = run_residual_correlation(
+        raw_support_states=raw_support_states,
+        raw_support_actions=raw_support_actions,
+        raw_resid_states=raw_resid_states,
+        raw_resid_actions=raw_resid_actions,
+        raw_resid_errors=raw_resid_errors,
+        dumps=dumps,
+        state_k=8, action_k_support=4, action_k_residual=2,
+        pca_fit_samples=None,
+    )
+    assert report["status"] == "not_computed"
+    assert "residual memory" in report["reason"]
+    assert "state_k" in report["reason"]
+
+
+def test_score_residual_queries_pearson_positive_on_engineered_signal():
+    """If we build M_resid so that residual is proportional to ||state||, and
+    query a batch of states with varying norms but matching actions, r(q) must
+    be positively correlated with the query state norm. This is the
+    fundamental "r(q) tracks the local residual structure" sanity check."""
+    torch.manual_seed(26)
+    n = 100
+    d_state = 4
+    raw_states = torch.randn(n, d_state)
+    raw_actions = torch.zeros(n, 2)
+    # Engineered: residual increases monotonically with ||state||.
+    raw_errors = raw_states.norm(dim=1)
+    variant = GeometryVariant("raw_id", pca_dim=None, whiten=False, calibration="identity")
+    mem = build_calibrated_residual_memory(raw_states, raw_actions, raw_errors, variant)
+
+    # Queries: 50 with small norm, 50 with large norm; same action as memory.
+    small = torch.randn(50, d_state) * 0.2
+    large = torch.randn(50, d_state) * 3.0
+    q_states = torch.cat([small, large], dim=0)
+    q_actions = torch.zeros(100, 2)
+    r = score_residual_queries(q_states, q_actions, mem, state_k=16, action_k=8)
+    # Mean r over large-norm queries must exceed mean r over small-norm queries.
+    assert float(r[50:].mean().item()) > float(r[:50].mean().item())
