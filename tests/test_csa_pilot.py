@@ -689,6 +689,182 @@ def test_analyze_reports_diag5_not_computed_when_topk_iters_absent():
     assert report["diagnostic_5_topk_cem_quadrants"]["status"] == "not_computed"
 
 
+# --------------------------------------------------------------------------
+# Diagnostic 6 -- scorer-validity probes (per-modality x per-depth).
+# --------------------------------------------------------------------------
+
+def test_diagnostic_6_reports_per_modality_per_depth_correlations_and_verdict():
+    torch.manual_seed(5)
+    d_state, action_dim = 8, 2
+    memory = SupportMemory.from_tensors(
+        torch.randn(128, d_state),
+        torch.randn(128, action_dim),
+        pca_dim=4,
+        state_reduction="flatten",
+        metadata={"frameskip": 5, "action_skip": 1, "action_space": "model_normalized"},
+    )
+    dumps = [
+        _make_synthetic_dump(episode_id=i, env="wall",
+                             episode_success=bool(i % 2),
+                             num_steps=3, depth=4,
+                             d_state=d_state, action_dim=action_dim)
+        for i in range(4)
+    ]
+    report = analyze(dumps, memory, state_k=4, action_k=4, beta=1.0)
+    diag6 = report["diagnostic_6_scorer_validity_probes"]
+    assert diag6["status"] == "computed"
+    assert "state_threshold" in diag6
+    assert diag6["subset_size_familiar"] <= diag6["subset_size_total"]
+
+    # Per-modality unconditioned + conditioned correlation blocks.
+    for block_key in ("unconditioned", "conditioned_overall"):
+        block = diag6[block_key]
+        for k in ("pearson_state", "spearman_state",
+                  "pearson_action", "spearman_action",
+                  "pearson_csa", "spearman_csa"):
+            assert k in block, f"{block_key} missing {k}"
+
+    # Per-depth slices: depth keys exist; each non-trivial slice has correlations.
+    assert diag6["by_depth"], "by_depth empty"
+    for slice_counts in diag6["by_depth"].values():
+        assert "count" in slice_counts
+        if slice_counts["count"] >= 2:
+            for k in ("pearson_state", "pearson_action", "pearson_csa"):
+                assert k in slice_counts
+
+    # Sign-consistency block surfaces per-modality summaries.
+    sc = diag6["sign_consistency"]
+    for modality in ("pearson_state", "pearson_action", "pearson_csa"):
+        s = sc[modality]
+        for k in ("depths_with_data", "all_positive", "all_negative",
+                  "all_same_sign", "values"):
+            assert k in s, f"sign_consistency.{modality} missing {k}"
+
+    # Verdict surfaces the booleans + the noise threshold + the note.
+    v = diag6["verdict"]
+    for k in ("scorer_wrong_signed_csa", "scorer_wrong_signed_action",
+              "scorer_noise_only", "noise_pearson_threshold", "verdict_note"):
+        assert k in v, f"verdict missing {k}"
+    # Booleans really are booleans (not None) so downstream conditionals are safe.
+    for k in ("scorer_wrong_signed_csa", "scorer_wrong_signed_action", "scorer_noise_only"):
+        assert isinstance(v[k], bool)
+
+
+def test_diagnostic_6_returns_not_computed_when_no_rollout_records():
+    """Single-step dump where depth=0 dominates -- depth>=1 rollout records may
+    be too few. Verify diag 6 reports a clean ``not_computed`` reason rather
+    than crashing."""
+    torch.manual_seed(6)
+    d_state, action_dim = 8, 2
+    memory = SupportMemory.from_tensors(
+        torch.randn(32, d_state),
+        torch.randn(32, action_dim),
+        pca_dim=4,
+        state_reduction="flatten",
+        metadata={"frameskip": 5, "action_skip": 1, "action_space": "model_normalized"},
+    )
+    # depth=1 means score_dumps emits a single depth-0 query (no depth>=1
+    # rollout record). Diag 6 needs depth>=1 records.
+    dumps = [_make_synthetic_dump(episode_id=0, env="wall", episode_success=False,
+                                  num_steps=1, depth=1,
+                                  d_state=d_state, action_dim=action_dim)]
+    report = analyze(dumps, memory, state_k=4, action_k=4, beta=1.0)
+    diag6 = report["diagnostic_6_scorer_validity_probes"]
+    assert diag6["status"] == "not_computed"
+
+
+# --------------------------------------------------------------------------
+# Planner-object comparison cross-cut.
+# --------------------------------------------------------------------------
+
+def test_planner_object_comparison_surfaces_executed_top1_and_topk_when_diag5_present():
+    torch.manual_seed(7)
+    d_state, action_dim = 8, 2
+    memory = SupportMemory.from_tensors(
+        torch.randn(128, d_state),
+        torch.randn(128, action_dim),
+        pca_dim=4,
+        state_reduction="flatten",
+        metadata={"frameskip": 5, "action_skip": 1, "action_space": "model_normalized"},
+    )
+    dumps = [
+        _make_topk_dump(episode_id=0, episode_success=False, n_iters=6, K=5,
+                        plan_length=4, d_state=d_state, action_dim=action_dim),
+        _make_topk_dump(episode_id=1, episode_success=True, n_iters=6, K=5,
+                        plan_length=4, d_state=d_state, action_dim=action_dim),
+        _make_topk_dump(episode_id=2, episode_success=False, n_iters=6, K=5,
+                        plan_length=4, d_state=d_state, action_dim=action_dim),
+    ]
+    report = analyze(dumps, memory, state_k=4, action_k=4, beta=1.0)
+    comp = report["planner_object_comparison"]
+
+    # Wording note explicitly disclaims top-1 == executed plan.
+    assert "not the executed" in comp["wording_note"].lower()
+
+    # Executed CEM mean plan is sourced from diag-0 primary.
+    exe = comp["executed_cem_mean_plan"]
+    assert exe["source"].startswith("diagnostic_0")
+    for k in ("key_quadrant_fraction_overall",
+              "key_quadrant_fraction_failures",
+              "key_quadrant_fraction_successes"):
+        assert k in exe
+    # Sanity: those fractions should equal diag-0 primary's ratios.
+    primary = report["diagnostic_0_failure_mode"]["primary"]
+    assert exe["key_quadrant_fraction_overall"] == primary["ratio_all"]
+    assert exe["key_quadrant_fraction_failures"] == primary["ratio_failed"]
+    assert exe["key_quadrant_fraction_successes"] == primary["ratio_successful"]
+
+    # Top-1 + top-K under BOTH threshold regimes + BOTH axes.
+    top1 = comp["top1_sampled_candidate"]
+    assert "not the executed plan" in top1["wording_note"].lower()
+    for regime_key in ("diag0_reference", "topk_relative"):
+        regime = top1[regime_key]
+        for axis_key in ("by_action", "by_csa"):
+            ax = regime[axis_key]
+            assert "key_quadrant_fraction" in ax
+            assert "count" in ax
+
+    topk = comp["topk_candidates_pooled"]
+    for regime_key in ("diag0_reference", "topk_relative"):
+        regime = topk[regime_key]
+        for axis_key in ("by_action", "by_csa"):
+            ax = regime[axis_key]
+            for k in ("key_quadrant_fraction_overall",
+                      "key_quadrant_fraction_failures",
+                      "key_quadrant_fraction_successes",
+                      "count_failures", "count_successes"):
+                assert k in ax, f"{regime_key}.{axis_key} missing {k}"
+
+
+def test_planner_object_comparison_marks_top1_and_topk_not_computed_for_v1_dumps():
+    """Old-schema dumps with no top-K data: executed_cem_mean_plan still
+    populated (diag-0 runs on selected actions), but top-1 + top-K-pooled both
+    report ``not_computed`` cleanly.
+    """
+    torch.manual_seed(8)
+    d_state, action_dim = 8, 2
+    memory = SupportMemory.from_tensors(
+        torch.randn(64, d_state),
+        torch.randn(64, action_dim),
+        pca_dim=4,
+        state_reduction="flatten",
+        metadata={"frameskip": 5, "action_skip": 1, "action_space": "model_normalized"},
+    )
+    dumps = [
+        _make_synthetic_dump(episode_id=0, env="wall", episode_success=False,
+                             d_state=d_state, action_dim=action_dim),
+        _make_synthetic_dump(episode_id=1, env="wall", episode_success=True,
+                             d_state=d_state, action_dim=action_dim),
+    ]
+    report = analyze(dumps, memory, state_k=4, action_k=4, beta=1.0)
+    comp = report["planner_object_comparison"]
+    # Executed plan still resolved via diag 0.
+    assert "source" in comp["executed_cem_mean_plan"]
+    # But top-1 and top-K aggregated -- both need top-K dumps -- are missing.
+    assert comp["top1_sampled_candidate"]["status"] == "not_computed"
+    assert comp["topk_candidates_pooled"]["status"] == "not_computed"
+
+
 def test_build_support_memory_random_sampling_is_seeded_and_reproducible(tmp_path):
     states_path = tmp_path / "states.pt"
     actions_path = tmp_path / "actions.pt"

@@ -1,6 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # All rights reserved.
-"""Offline CSA-MPC diagnostics 0-5 (memo sas_mpc_research_memo_zh.tex section 6).
+"""Offline CSA-MPC diagnostics 0-6 + planner-object comparison
+(memo sas_mpc_research_memo_zh.tex section 6).
 
 This module consumes the per-episode ``.pt`` dumps written by
 ``DiagnosticRecorder`` during instrumented vanilla CEM/MPC eval, runs the
@@ -32,6 +33,30 @@ This module consumes the per-episode ``.pt`` dumps written by
                    top-K rank 0 is the best *sampled* candidate at a CEM iter
                    and is NOT the executed selected plan -- the executed plan
                    is the CEM mean action and is covered by diagnostics 0-4.
+* Diagnostic 6  -- scorer-validity probes. Per-modality (U_state, U_action|x,
+                   U_SA) Pearson + Spearman correlations against rollout error,
+                   conditioned on state-familiar, broken down by rollout depth.
+                   Includes sign-consistency probes across depths and a verdict
+                   block intended to distinguish a *broken scorer* (consistently
+                   wrong-signed correlations across modalities and depths) from
+                   a *failure mode that isn't action-support-driven* (noise-floor
+                   correlations across all modalities). Runs on the same rollout
+                   records as diag 2 -- no schema dependency on top-K dumps.
+
+In addition to the per-diagnostic blocks, the report carries a top-level
+``planner_object_comparison`` cross-cut that surfaces the KEY-quadrant
+(state-familiar AND axis-unsupported) fraction for three CEM planner objects
+side by side:
+
+* **executed CEM mean plan** -- diag-0 primary census (the action that is
+  actually executed each replan step). Thresholds: diag-0 reference.
+* **top-1 sampled candidate** -- diag-5 ``by_rank.rank_0`` slice aggregated
+  across CEM iterations. NOT the executed plan.
+* **top-K candidates pooled** -- diag-5 ``by_outcome`` aggregated.
+
+Reported under both threshold regimes (``diag0_reference`` /
+``topk_relative``) and both axes (``by_action`` / ``by_csa``) when diag-5 has
+top-K data.
 
 Everything runs offline, so the support memory, k, beta and every diagnostic
 threshold can be re-tuned without re-running eval.
@@ -196,12 +221,17 @@ def analyze(
         action_unsupported_quantile=action_unsupported_quantile,
     )
 
+    diag6 = _diagnostic_6_scorer_validity_probes(records, state_familiar_quantile)
+    comparison = _planner_object_comparison(diag0, diag5)
+
     report["diagnostic_0_failure_mode"] = diag0
     report["diagnostic_1_exploitation_gap"] = diag1
     report["diagnostic_2_conditioned_correlation"] = diag2
     report["diagnostic_3_buckets"] = diag3
     report["diagnostic_4_false_negative_by_depth"] = diag4
     report["diagnostic_5_topk_cem_quadrants"] = diag5
+    report["diagnostic_6_scorer_validity_probes"] = diag6
+    report["planner_object_comparison"] = comparison
     report["go_no_go"] = _go_no_go(diag0, diag1, diag2, diag3, gate_min_ratio)
     return report
 
@@ -728,6 +758,306 @@ def _diagnostic_5(
 
 
 # --------------------------------------------------------------------------
+# Diagnostic 6 -- scorer-validity probes.
+# --------------------------------------------------------------------------
+
+# Magnitude floor below which a per-depth Pearson is treated as noise. 0.10 is
+# generous (small effect sizes can still survive) but it cleanly separates the
+# Wall-style "wrong-signed but real" case (CSA |r| ~ 0.25) from a true noise
+# floor (|r| < 0.05 on every modality and depth).
+_DIAG6_NOISE_PEARSON_THRESHOLD = 0.10
+
+
+def _diagnostic_6_scorer_validity_probes(
+    records: List[Dict[str, Any]],
+    state_familiar_quantile: float = 0.50,
+) -> Dict[str, Any]:
+    """Per-modality, per-rollout-depth correlation breakdown intended to help
+    distinguish a *broken support scorer* from a *failure mode that just isn't
+    action-support-driven* on a given env.
+
+    Wall is the motivating case: diag 2 shows wrong-signed Pearson between the
+    action / CSA score and the rollout error inside the state-familiar subset.
+    Two non-exclusive hypotheses fit that observation:
+
+      (a) The scorer itself misbehaves on Wall (kNN noise, PCA losing too much
+          variance, calibration drift, etc.) -- so the signs flip across most
+          modalities and depths.
+      (b) The Wall failure mode is not driven by action-support at all -- so
+          *all* support-side correlations land near the noise floor regardless
+          of sign.
+
+    This diagnostic reports the per-modality data so the user can read the
+    sign pattern directly, and a small ``verdict`` block that surfaces two
+    boolean hints (``scorer_wrong_signed_csa`` /
+    ``scorer_wrong_signed_action`` -- all per-depth Pearsons negative for that
+    modality -- and ``scorer_noise_only`` -- every per-depth |Pearson| across
+    all three modalities below ``_DIAG6_NOISE_PEARSON_THRESHOLD``). These are
+    advisory only; the values are always reported alongside.
+    """
+    rollout = [r for r in records if not r["is_decision_step"] and _finite(r["rollout_error"])]
+    if len(rollout) < 2:
+        return {"status": "not_computed", "reason": "fewer than 2 imagined-rollout records with finite error"}
+
+    state_scores = torch.tensor([r["state_score"] for r in rollout])
+    action_scores = torch.tensor([r["action_score"] for r in rollout])
+    csa_scores = torch.tensor([r["csa_score"] for r in rollout])
+    errors = torch.tensor([r["rollout_error"] for r in rollout])
+    depths = torch.tensor([int(r["depth"]) for r in rollout])
+
+    state_thr = float(torch.quantile(state_scores, state_familiar_quantile).item())
+    familiar_mask = state_scores <= state_thr
+
+    def _modality_corrs(
+        ss: torch.Tensor, acs: torch.Tensor, css: torch.Tensor, err: torch.Tensor
+    ) -> Dict[str, Any]:
+        if ss.numel() < 2:
+            return {
+                "pearson_state": None, "spearman_state": None,
+                "pearson_action": None, "spearman_action": None,
+                "pearson_csa": None, "spearman_csa": None,
+            }
+        return {
+            "pearson_state": _pearson(ss, err),
+            "spearman_state": _spearman(ss, err),
+            "pearson_action": _pearson(acs, err),
+            "spearman_action": _spearman(acs, err),
+            "pearson_csa": _pearson(css, err),
+            "spearman_csa": _spearman(css, err),
+        }
+
+    unconditioned = _modality_corrs(state_scores, action_scores, csa_scores, errors)
+    if int(familiar_mask.sum().item()) >= 2:
+        conditioned_overall = _modality_corrs(
+            state_scores[familiar_mask], action_scores[familiar_mask],
+            csa_scores[familiar_mask], errors[familiar_mask],
+        )
+    else:
+        conditioned_overall = _modality_corrs(
+            torch.empty(0), torch.empty(0), torch.empty(0), torch.empty(0)
+        )
+
+    by_depth: Dict[str, Any] = {}
+    for d in sorted({int(x.item()) for x in depths}):
+        depth_mask = (depths == d) & familiar_mask
+        count = int(depth_mask.sum().item())
+        if count < 2:
+            by_depth[f"depth_{d}"] = {"count": count}
+            continue
+        by_depth[f"depth_{d}"] = {
+            "count": count,
+            **_modality_corrs(
+                state_scores[depth_mask], action_scores[depth_mask],
+                csa_scores[depth_mask], errors[depth_mask],
+            ),
+        }
+
+    def _sign_summary(metric_key: str) -> Dict[str, Any]:
+        vals = [
+            d_data[metric_key]
+            for d_data in by_depth.values()
+            if d_data.get(metric_key) is not None
+        ]
+        if not vals:
+            return {
+                "depths_with_data": 0,
+                "all_positive": None,
+                "all_negative": None,
+                "all_same_sign": None,
+                "values": [],
+            }
+        return {
+            "depths_with_data": len(vals),
+            "all_positive": bool(all(v > 0 for v in vals)),
+            "all_negative": bool(all(v < 0 for v in vals)),
+            "all_same_sign": bool(all(v > 0 for v in vals) or all(v < 0 for v in vals)),
+            "values": [round(float(v), 4) for v in vals],
+        }
+
+    sign_consistency = {
+        "pearson_state": _sign_summary("pearson_state"),
+        "pearson_action": _sign_summary("pearson_action"),
+        "pearson_csa": _sign_summary("pearson_csa"),
+    }
+
+    # Verdict booleans. Both ``scorer_wrong_signed_*`` require >= 2 per-depth
+    # values agreeing on a negative sign so we never raise the flag on a single
+    # data point.
+    def _wrong_signed(metric_key: str) -> bool:
+        s = sign_consistency[metric_key]
+        return bool(s["depths_with_data"] >= 2 and s["all_negative"])
+
+    noise_only = True
+    for metric_key in ("pearson_state", "pearson_action", "pearson_csa"):
+        for v in sign_consistency[metric_key]["values"]:
+            if abs(v) >= _DIAG6_NOISE_PEARSON_THRESHOLD:
+                noise_only = False
+                break
+        if not noise_only:
+            break
+
+    verdict = {
+        "scorer_wrong_signed_csa": _wrong_signed("pearson_csa"),
+        "scorer_wrong_signed_action": _wrong_signed("pearson_action"),
+        "scorer_noise_only": noise_only,
+        "noise_pearson_threshold": _DIAG6_NOISE_PEARSON_THRESHOLD,
+        "verdict_note": (
+            "scorer_wrong_signed_{csa,action} -> Pearson is negative on every "
+            "depth with >=2 data points; either the kNN scorer misbehaves on "
+            "this env or the failure mode actively prefers the supposedly "
+            "'unsupported' direction. scorer_noise_only -> every per-depth "
+            "|Pearson| across all three modalities is below "
+            "noise_pearson_threshold; the support score has no discriminative "
+            "power here. Neither flag set -> the score carries signal; "
+            "inspect sign_consistency.values for direction and magnitude."
+        ),
+    }
+
+    return {
+        "status": "computed",
+        "state_familiar_quantile": state_familiar_quantile,
+        "state_threshold": state_thr,
+        "subset_size_familiar": int(familiar_mask.sum().item()),
+        "subset_size_total": int(state_scores.numel()),
+        "unconditioned": unconditioned,
+        "conditioned_overall": conditioned_overall,
+        "by_depth": by_depth,
+        "sign_consistency": sign_consistency,
+        "verdict": verdict,
+    }
+
+
+# --------------------------------------------------------------------------
+# Planner-object comparison cross-cut.
+# --------------------------------------------------------------------------
+
+def _planner_object_comparison(
+    diag0: Dict[str, Any],
+    diag5: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Side-by-side KEY-quadrant comparison of three CEM planner objects:
+
+    * **executed CEM mean plan** -- diag-0 primary (the action actually emitted
+      each replan step).
+    * **top-1 sampled candidate** -- diag-5 ``by_rank.rank_0`` aggregated across
+      CEM iters. NOT the executed plan; it is the lowest-cost individual sample
+      drawn during search.
+    * **top-K candidates pooled** -- diag-5 ``by_outcome`` aggregated.
+
+    Surfaces the KEY-quadrant fraction (state-familiar AND axis-unsupported)
+    under both threshold regimes (``diag0_reference`` / ``topk_relative``) and
+    both axes (``by_action`` / ``by_csa``) where data is available. Lets the
+    reader check at a glance whether the planner's "best samples" concentrate
+    in the bad quadrant differently from the executed mean plan.
+    """
+    out: Dict[str, Any] = {
+        "metric": "Fraction in (state-familiar AND axis-unsupported) KEY quadrant.",
+        "wording_note": (
+            "The executed plan is the CEM mean action (handled by diag 0). "
+            "Top-1 sampled candidate is the best top-K sample per CEM "
+            "iteration, aggregated across iterations; it is NOT the executed "
+            "plan. Top-K pooled aggregates every top-K candidate across CEM "
+            "iterations and ranks."
+        ),
+    }
+
+    # ---- Executed CEM mean plan (from diag 0) ----
+    if diag0.get("status") == "computed":
+        primary = diag0["primary"]
+        out["executed_cem_mean_plan"] = {
+            "source": "diagnostic_0_failure_mode.primary",
+            "axis": "by_action (diag 0 only computes the action axis)",
+            "thresholds": {
+                "regime": "diag0_reference (same as diag-0 primary)",
+                "state_familiar_quantile": primary["state_familiar_quantile"],
+                "action_unsupported_quantile": primary["action_unsupported_quantile"],
+                "state_threshold": primary["state_threshold"],
+                "action_threshold": primary["action_threshold"],
+            },
+            "key_quadrant_fraction_overall": primary["ratio_all"],
+            "key_quadrant_fraction_failures": primary["ratio_failed"],
+            "key_quadrant_fraction_successes": primary["ratio_successful"],
+        }
+    else:
+        out["executed_cem_mean_plan"] = {
+            "status": "not_computed",
+            "reason": diag0.get("reason", "diag 0 not computed"),
+        }
+
+    # ---- Top-K-derived (top-1 + top-K pooled) ----
+    if diag5.get("status") != "computed":
+        for key in ("top1_sampled_candidate", "topk_candidates_pooled"):
+            out[key] = {
+                "status": "not_computed",
+                "reason": "diag 5 not computed (no schema-v2 dumps with topk_iters_*)",
+            }
+        return out
+
+    def _key_quadrant(slice_counts: Dict[str, Any]) -> float | None:
+        if not slice_counts or int(slice_counts.get("count", 0)) <= 0:
+            return None
+        return slice_counts.get("p_familiar_unsupported")
+
+    def _top1_for(axis: Dict[str, Any]) -> Dict[str, Any]:
+        rank0 = axis.get("by_rank", {}).get("rank_0", {})
+        return {
+            "key_quadrant_fraction": _key_quadrant(rank0),
+            "count": int(rank0.get("count", 0)),
+        }
+
+    def _topk_for(axis: Dict[str, Any]) -> Dict[str, Any]:
+        by_outcome = axis.get("by_outcome", {})
+        succ = by_outcome.get("success", {})
+        fail = by_outcome.get("failure", {})
+        n_succ = int(succ.get("count", 0))
+        n_fail = int(fail.get("count", 0))
+        p_succ = _key_quadrant(succ)
+        p_fail = _key_quadrant(fail)
+        total = n_succ + n_fail
+        if total > 0:
+            wsucc = n_succ * (p_succ if p_succ is not None else 0.0)
+            wfail = n_fail * (p_fail if p_fail is not None else 0.0)
+            overall = (wsucc + wfail) / total
+        else:
+            overall = None
+        return {
+            "key_quadrant_fraction_overall": overall,
+            "key_quadrant_fraction_failures": p_fail,
+            "key_quadrant_fraction_successes": p_succ,
+            "count_failures": n_fail,
+            "count_successes": n_succ,
+        }
+
+    def _regime_block(
+        regime: Dict[str, Any], extractor
+    ) -> Dict[str, Any]:
+        if not isinstance(regime, dict) or regime.get("status") == "not_computed":
+            return {
+                "status": "not_computed",
+                "reason": regime.get("reason", "regime unavailable") if isinstance(regime, dict) else "regime unavailable",
+            }
+        return {
+            "by_action": extractor(regime["by_action"]),
+            "by_csa": extractor(regime["by_csa"]),
+        }
+
+    top1_block: Dict[str, Any] = {
+        "wording_note": "Best top-K sample per CEM iter, aggregated across iters. NOT the executed plan.",
+        "source": "diagnostic_5_topk_cem_quadrants.{regime}.{axis}.by_rank.rank_0",
+        "diag0_reference": _regime_block(diag5.get("diag0_reference", {}), _top1_for),
+        "topk_relative": _regime_block(diag5.get("topk_relative", {}), _top1_for),
+    }
+    topk_block: Dict[str, Any] = {
+        "source": "diagnostic_5_topk_cem_quadrants.{regime}.{axis}.by_outcome (overall = success+failure weighted)",
+        "diag0_reference": _regime_block(diag5.get("diag0_reference", {}), _topk_for),
+        "topk_relative": _regime_block(diag5.get("topk_relative", {}), _topk_for),
+    }
+    out["top1_sampled_candidate"] = top1_block
+    out["topk_candidates_pooled"] = topk_block
+    return out
+
+
+# --------------------------------------------------------------------------
 # Go / No-Go.
 # --------------------------------------------------------------------------
 
@@ -824,5 +1154,7 @@ def _empty_diagnostics(gate_min_ratio: float) -> Dict[str, Any]:
         "diagnostic_3_buckets": {"status": "not_computed", "reason": "no scored queries"},
         "diagnostic_4_false_negative_by_depth": {"status": "not_computed", "reason": "no scored queries"},
         "diagnostic_5_topk_cem_quadrants": {"status": "not_computed", "reason": "no scored queries"},
+        "diagnostic_6_scorer_validity_probes": {"status": "not_computed", "reason": "no scored queries"},
+        "planner_object_comparison": {"status": "not_computed", "reason": "no scored queries"},
         "go_no_go": {"gate_min_ratio": gate_min_ratio, "recommendation": "no-go"},
     }
