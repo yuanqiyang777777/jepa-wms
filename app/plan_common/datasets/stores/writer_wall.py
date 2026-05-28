@@ -8,7 +8,7 @@
 #   actions.pth         (N, T, D_a)  float
 #   door_locations.pth  (N, T, D_dl) float    (only frame 0 is consumed by env_info)
 #   wall_locations.pth  (N, T, D_wl) float    (only frame 0)
-#   obses/episode_NNN.pth   (T, H, W, C) uint8
+#   obses/episode_NNN.pth   (T,C,H,W) float32 on the real dataset, or (T,H,W,C) uint8 in toy data
 #
 # All episodes have uniform length T (= actions.shape[1]); no seq_lengths.pth file.
 #
@@ -48,7 +48,7 @@ log = get_logger(__name__)
 def convert_wall_to_lance(
     src_dir: str | os.PathLike,
     dst_uri: str | os.PathLike,
-    codec: str = "png",
+    codec: str = "raw_float32",
     mode: str = "error",
     jpeg_quality: int = 95,
     limit: Optional[int] = None,
@@ -61,7 +61,8 @@ def convert_wall_to_lance(
             wall_locations.pth / obses/episode_NNN.pth` (matches
             `WallDataset.__init__` layout at wall_dset.py:36-46).
         dst_uri: destination directory for the Lance dataset (also holds swm_metadata.json).
-        codec: image codec; one of {"png" (default, lossless), "raw_uint8", "jpeg"}.
+        codec: image codec. Wall real data is float32 T,C,H,W, so the default
+            is "raw_float32" for bit-exact parity. PNG/JPEG require uint8 input.
         mode: one of {"error", "overwrite"} (Phase 1.b inherits Phase 1.a's no-append policy).
         jpeg_quality: JPEG quality factor (used only when codec="jpeg").
         limit: if set, only convert the first N episodes.
@@ -121,8 +122,15 @@ def convert_wall_to_lance(
     # ---- Probe image shape ----
     first_img = torch.load(src / "obses" / f"episode_{0:03d}.pth")
     first_img_np = first_img.cpu().numpy() if isinstance(first_img, torch.Tensor) else np.asarray(first_img)
-    assert first_img_np.ndim == 4, f"expected per-episode image shape (T,H,W,C); got {first_img_np.shape}"
-    _T0, H, W, C = first_img_np.shape
+    assert first_img_np.ndim == 4, f"expected per-episode image shape (T,H,W,C) or (T,C,H,W); got {first_img_np.shape}"
+    if first_img_np.shape[-1] in (1, 3, 4):
+        source_image_layout = "thwc"
+        _T0, H, W, C = first_img_np.shape
+    elif first_img_np.shape[1] in (1, 3, 4):
+        source_image_layout = "tchw"
+        _T0, C, H, W = first_img_np.shape
+    else:
+        raise ValueError(f"Cannot infer Wall image layout from shape {first_img_np.shape}")
     image_shape_chw = [int(C), int(H), int(W)]
     del first_img, first_img_np
 
@@ -143,10 +151,17 @@ def convert_wall_to_lance(
 
             img_t = torch.load(src / "obses" / f"episode_{ep:03d}.pth")
             img_np = img_t.cpu().numpy() if isinstance(img_t, torch.Tensor) else np.asarray(img_t)
-            if img_np.dtype != np.uint8:
+            if source_image_layout == "thwc" and codec == "raw_float32":
+                img_np = np.transpose(img_np, (0, 3, 1, 2))
+            elif source_image_layout == "tchw" and codec != "raw_float32":
+                img_np = np.transpose(img_np, (0, 2, 3, 1))
+
+            if codec == "raw_float32":
+                img_np = img_np.astype(np.float32, copy=False)
+            elif img_np.dtype != np.uint8:
                 raise TypeError(
                     f"Expected uint8 images for episode {ep}, got dtype {img_np.dtype}. "
-                    "Refusing to silently quantise."
+                    "Use codec='raw_float32' for Wall float image tensors."
                 )
             if img_np.shape[0] < T:
                 raise ValueError(
@@ -185,6 +200,7 @@ def convert_wall_to_lance(
         "image_codec": codec,
         "image_columns": ["image_bytes"],
         "image_shape": image_shape_chw,
+        "source_image_layout": source_image_layout,
         "num_episodes": n_eps,
         "seq_lengths": seq_lengths,  # uniform; included for parity with other envs
         "traj_len": int(traj_len),

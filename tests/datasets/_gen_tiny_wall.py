@@ -12,7 +12,7 @@
 #       door_locations.pth  (N, T, door_loc_dim)     float (only [..,0,..] consumed)
 #       wall_locations.pth  (N, T, wall_loc_dim)     float (only [..,0,..] consumed)
 #       obses/
-#           episode_000.pth   (T, H, W, C) uint8
+#           episode_000.pth   (T, C, H, W) float32 in 0..255
 #           episode_001.pth
 #           ...
 #
@@ -35,7 +35,7 @@ DEFAULT_STATE_DIM = 2
 DEFAULT_ACTION_DIM = 2
 DEFAULT_DOOR_LOC_DIM = 1
 DEFAULT_WALL_LOC_DIM = 1
-DEFAULT_IMG_SHAPE = (16, 16, 3)
+DEFAULT_IMG_SHAPE = (3, 16, 16)
 
 
 def generate_tiny_wall(
@@ -50,7 +50,7 @@ def generate_tiny_wall(
     seed: int = 0,
 ) -> Path:
     """Generate a deterministic tiny Wall-shaped fixture under `dst`. Returns the Path."""
-    H, W, C = img_shape
+    C, H, W = img_shape
 
     dst = Path(dst)
     (dst / "obses").mkdir(parents=True, exist_ok=True)
@@ -68,7 +68,7 @@ def generate_tiny_wall(
     torch.save(wall_locations, dst / "wall_locations.pth")
 
     for ep in range(n_episodes):
-        img = torch.randint(0, 256, size=(T, H, W, C), generator=gen, dtype=torch.uint8)
+        img = torch.randint(0, 511, size=(T, C, H, W), generator=gen, dtype=torch.int32).float() * 0.5
         torch.save(img, dst / "obses" / f"episode_{ep:03d}.pth")
 
     return dst

@@ -21,7 +21,7 @@ from src.utils.logging import get_logger
 log = get_logger(__name__)
 
 
-SUPPORTED_CODECS = ("png", "raw_uint8", "jpeg")
+SUPPORTED_CODECS = ("png", "raw_uint8", "raw_float32", "jpeg")
 METADATA_FILENAME = "swm_metadata.json"
 
 
@@ -41,6 +41,9 @@ def _decode_image(blob: bytes, codec: str, image_shape: Sequence[int]) -> np.nda
         c, h, w = image_shape
         arr = np.frombuffer(blob, dtype=np.uint8).reshape(h, w, c)
         return arr
+    elif codec == "raw_float32":
+        c, h, w = image_shape
+        return np.frombuffer(blob, dtype=np.float32).reshape(c, h, w)
     elif codec in ("png", "jpeg"):
         from PIL import Image
 
@@ -55,6 +58,9 @@ def _decode_image(blob: bytes, codec: str, image_shape: Sequence[int]) -> np.nda
 
 def _encode_image(arr: np.ndarray, codec: str, jpeg_quality: int = 95) -> bytes:
     """Encode an image array (H, W, C) uint8 to bytes per codec."""
+    if codec == "raw_float32":
+        assert arr.dtype == np.float32, f"raw_float32 image must be float32, got {arr.dtype}"
+        return np.ascontiguousarray(arr).tobytes()
     assert arr.dtype == np.uint8, f"image must be uint8, got {arr.dtype}"
     if codec == "raw_uint8":
         return arr.tobytes()

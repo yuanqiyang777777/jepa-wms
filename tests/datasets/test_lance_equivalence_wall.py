@@ -1,7 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # Licensed under the MIT License.
 #
-# Bit-exact equivalence test for raw Wall vs Lance (PNG codec) backend.
+# Bit-exact equivalence test for raw Wall vs Lance (raw_float32 codec) backend.
 #
 # Acceptance:
 #   * train/val slice lists identical (same seed -> same randperm)
@@ -39,7 +39,7 @@ SEED = 234
 SPLIT_RATIO = 0.9
 
 
-def _build_pair(tiny_wall_dir: str, tmp_path: Path, codec: str = "png"):
+def _build_pair(tiny_wall_dir: str, tmp_path: Path, codec: str = "raw_float32"):
     lance_uri = tmp_path / "wall.lance"
     convert_wall_to_lance(
         src_dir=tiny_wall_dir,
@@ -94,8 +94,8 @@ def test_slice_lists_bit_identical(tiny_wall_dir, tmp_path):
     assert len(lance_dsets["valid"]) == len(raw_dsets["valid"])
 
 
-def test_per_sample_bit_exact_png(tiny_wall_dir, tmp_path):
-    raw_dsets, lance_dsets, _, _ = _build_pair(tiny_wall_dir, tmp_path, codec="png")
+def test_per_sample_bit_exact_raw_float32(tiny_wall_dir, tmp_path):
+    raw_dsets, lance_dsets, _, _ = _build_pair(tiny_wall_dir, tmp_path, codec="raw_float32")
 
     for split in ("train", "valid"):
         raw_s = raw_dsets[split]
@@ -157,7 +157,7 @@ def test_env_info_door_wall_locations_match(tiny_wall_dir, tmp_path):
     convert_wall_to_lance(
         src_dir=tiny_wall_dir,
         dst_uri=lance_uri,
-        codec="png",
+        codec="raw_float32",
         mode="overwrite",
         action_scale=1.0,
     )
@@ -170,7 +170,7 @@ def test_env_info_door_wall_locations_match(tiny_wall_dir, tmp_path):
     )
     lance_full = WallLanceWindowDataset(
         lance_uri=str(lance_uri),
-        image_codec="png",
+        image_codec="raw_float32",
         transform=None,
         normalize_action=True,
     )
