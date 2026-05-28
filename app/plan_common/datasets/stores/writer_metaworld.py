@@ -12,6 +12,7 @@ from typing import Iterator, Optional
 
 import imageio.v2 as imageio
 import numpy as np
+import torch
 
 from src.utils.logging import get_logger
 
@@ -44,10 +45,19 @@ def _video_to_frames(video) -> np.ndarray:
                 return np.stack([frame for frame in reader])
             finally:
                 reader.close()
-    raise TypeError(
-        "Metaworld Lance writer expects the parquet video column to contain "
-        "a dict with 'bytes' or 'path'. Torchcodec VideoDecoder conversion is intentionally unsupported."
-    )
+    frames = []
+    for i in range(len(video)):
+        frame = video[i]
+        if hasattr(frame, "data"):
+            frame = frame.data
+        if isinstance(frame, torch.Tensor):
+            frame_np = frame.permute(1, 2, 0).cpu().numpy()
+        else:
+            frame_np = np.asarray(frame)
+            if frame_np.ndim == 3 and frame_np.shape[0] in (1, 3, 4):
+                frame_np = np.transpose(frame_np, (1, 2, 0))
+        frames.append(frame_np)
+    return np.stack(frames)
 
 
 def _build_metaworld_schema(d_p: int, d_a: int, d_s: int):
