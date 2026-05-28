@@ -28,6 +28,14 @@ from .writer_point_maze import (
 log = get_logger(__name__)
 
 
+def _decord_batch_to_numpy(frames) -> np.ndarray:
+    if isinstance(frames, torch.Tensor):
+        return frames.cpu().numpy()
+    if hasattr(frames, "asnumpy"):
+        return frames.asnumpy()
+    return np.asarray(frames)
+
+
 def convert_pusht_to_lance(
     src_dir: str | os.PathLike,
     dst_uri: str | os.PathLike,
@@ -145,7 +153,7 @@ def _convert_pusht_split_to_lance(
             T = seq_lengths[ep]
             reader = decord.VideoReader(str(src_dir / "obses" / f"episode_{ep:03d}.mp4"), num_threads=1)
             frames = reader.get_batch(list(range(T)))
-            img_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else np.asarray(frames)
+            img_np = _decord_batch_to_numpy(frames)
             if img_np.dtype != np.uint8:
                 raise TypeError(f"Expected uint8 decoded PushT frames, got {img_np.dtype}")
 
