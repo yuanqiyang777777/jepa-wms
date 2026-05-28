@@ -90,3 +90,35 @@ def test_training_time_summary_parses_run_dir(tmp_path):
     assert math.isclose(summary["data_fetch_ms"], 12.5)
     assert summary["dataset_size"] == 759
     assert math.isclose(summary["epoch_estimate_min"], 759 * 234.5 / 1000 / 60)
+
+
+def test_training_time_summary_handles_legacy_shifted_csv(tmp_path):
+    run_dir = tmp_path / "20260528_dino_wm_timing_pusht_raw_r2"
+    run_dir.mkdir()
+
+    # train.py writes [epoch, itr, loss, gpu_ms, iter_ms, ...], but some CSV
+    # headers omit the fixed timing columns and start directly with loss/stat keys.
+    with (run_dir / "log_r0.csv").open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["epoch", "itr", "loss", "act_max"])
+        for itr in range(35):
+            writer.writerow([1, itr, 1.0, 300.0 + itr, 600.0 + itr, 9.0])
+
+    (run_dir / "launch.log").write_text(
+        "\n".join(
+            [
+                "RUN_ID=20260528_dino_wm_timing_pusht_raw_r2",
+                "PROFILE_WARMUP=30",
+                "PROFILE_STEPS=5",
+                "Iterations per epoch: 360 (dataset size: 10321)",
+            ]
+        )
+    )
+
+    from experiments.scripts.summarize_training_time_profile import summarize_run
+
+    summary = summarize_run(run_dir, warmup=30, measured_steps=5)
+
+    assert summary["rows_used"] == 5
+    assert math.isclose(summary["gpu_median_ms"], 332.0)
+    assert math.isclose(summary["iter_median_ms"], 632.0)

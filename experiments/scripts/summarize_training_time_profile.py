@@ -109,10 +109,34 @@ def _parse_loader_size(text: str) -> tuple[int | None, int | None]:
 
 def _load_timing_rows(csv_path: Path, warmup: int, measured_steps: int) -> tuple[list[float], list[float]]:
     with csv_path.open(newline="") as f:
-        rows = list(csv.DictReader(f))
+        raw_rows = list(csv.reader(f))
+    if not raw_rows:
+        return [], []
+
+    header = raw_rows[0]
+    rows = raw_rows[1:]
+
+    def _cell(row: list[str], idx: int) -> float | None:
+        if idx < 0 or idx >= len(row) or row[idx] == "":
+            return None
+        try:
+            return float(row[idx])
+        except ValueError:
+            return None
+
+    if "iter-time(ms)" in header and "gpu-time(ms)" in header:
+        iter_idx = header.index("iter-time(ms)")
+        gpu_idx = header.index("gpu-time(ms)")
+    else:
+        # train.py always writes [epoch, itr, loss, gpu_ms, iter_ms, ...].
+        # Some logger headers omit the fixed timing columns, so fall back to
+        # positions 3/4 when named columns are unavailable.
+        gpu_idx = 3
+        iter_idx = 4
+
     rows = rows[warmup : warmup + measured_steps]
-    iter_times = [float(row["iter-time(ms)"]) for row in rows if row.get("iter-time(ms)")]
-    gpu_times = [float(row["gpu-time(ms)"]) for row in rows if row.get("gpu-time(ms)")]
+    iter_times = [value for row in rows if (value := _cell(row, iter_idx)) is not None]
+    gpu_times = [value for row in rows if (value := _cell(row, gpu_idx)) is not None]
     return iter_times, gpu_times
 
 
