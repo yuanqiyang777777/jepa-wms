@@ -1,0 +1,65 @@
+#!/bin/bash
+# Convert the raw PointMaze dataset into the Phase-1.a Lance layout used for timing.
+#
+# Defaults are intentionally conservative: write to a dated Lance directory and
+# fail if the destination already exists.
+#
+# Optional:
+#   JEPAWM_DSET_LANCE=$JEPAWM_DSET/_lance_20260528
+#   INPUT_ROOT=$JEPAWM_DSET/point_maze
+#   OUTPUT_URI=$JEPAWM_DSET_LANCE/PointMaze.lance
+#   CODEC=png
+#   MODE=error
+#   JPEG_QUALITY=95
+#   LIMIT=                 # set to an integer for smoke conversion
+
+source "$(dirname "$0")/_common.sh"
+
+export JEPAWM_DSET_LANCE="${JEPAWM_DSET_LANCE:-$JEPAWM_DSET/_lance_20260528}"
+INPUT_ROOT="${INPUT_ROOT:-$JEPAWM_DSET/point_maze}"
+OUTPUT_URI="${OUTPUT_URI:-$JEPAWM_DSET_LANCE/PointMaze.lance}"
+CODEC="${CODEC:-png}"
+MODE="${MODE:-error}"
+JPEG_QUALITY="${JPEG_QUALITY:-95}"
+LIMIT="${LIMIT:-}"
+
+if [ ! -d "$INPUT_ROOT" ]; then
+  echo "ERROR: PointMaze input root not found: $INPUT_ROOT" >&2
+  exit 2
+fi
+
+mkdir -p "$JEPAWM_DSET_LANCE"
+
+{
+  echo "INPUT_ROOT=$INPUT_ROOT"
+  echo "OUTPUT_URI=$OUTPUT_URI"
+  echo "CODEC=$CODEC"
+  echo "MODE=$MODE"
+  echo "JPEG_QUALITY=$JPEG_QUALITY"
+  echo "LIMIT=${LIMIT:-unset}"
+} >&2
+
+python - "$INPUT_ROOT" "$OUTPUT_URI" "$CODEC" "$MODE" "$JPEG_QUALITY" "$LIMIT" <<'PY'
+import sys
+
+from app.plan_common.datasets.stores.writer_point_maze import convert_point_maze_to_lance
+
+input_root, output_uri, codec, mode, jpeg_quality, limit = sys.argv[1:7]
+limit_value = None if limit == "" else int(limit)
+
+meta = convert_point_maze_to_lance(
+    input_root,
+    output_uri,
+    codec=codec,
+    mode=mode,
+    jpeg_quality=int(jpeg_quality),
+    limit=limit_value,
+)
+print(
+    "converted PointMaze episodes={episodes} codec={codec} output={output}".format(
+        episodes=meta["num_episodes"],
+        codec=meta["image_codec"],
+        output=output_uri,
+    )
+)
+PY
