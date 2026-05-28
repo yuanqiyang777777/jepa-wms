@@ -206,8 +206,13 @@ class LanceStore:
         obs_rows = self._row_indices(ep_idx, step_indices)
         act_rows = self._row_indices(ep_idx, action_step_indices)
 
+        schema_names = set(ds.schema.names)
+        obs_columns = ["image_bytes", "proprio", "state"]
+        if "reward" in schema_names:
+            obs_columns.append("reward")
+
         # Take obs columns at obs_rows; take action column at act_rows. Two scans.
-        obs_table = ds.take(obs_rows, columns=["image_bytes", "proprio", "state"])
+        obs_table = ds.take(obs_rows, columns=obs_columns)
         act_table = ds.take(act_rows, columns=["action"])
 
         # Decode images.
@@ -223,7 +228,10 @@ class LanceStore:
         state = _arrow_2d_to_tensor(obs_table.column("state"))
         action = _arrow_2d_to_tensor(act_table.column("action"))
 
-        return {"visual": visual, "proprio": proprio, "state": state, "action": action}
+        out = {"visual": visual, "proprio": proprio, "state": state, "action": action}
+        if "reward" in schema_names:
+            out["reward"] = _arrow_2d_to_tensor(obs_table.column("reward"))
+        return out
 
     def read_full_column(self, name: str) -> torch.Tensor:
         """Read a single tabular column across the entire table.

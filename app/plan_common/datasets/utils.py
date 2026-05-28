@@ -18,8 +18,11 @@ from .droid_dset import DROIDVideoDataset
 from .metaworld_hf_dset import load_metaworld_hf_slice_train_val
 from .point_maze_dset import load_point_maze_slice_train_val
 from .pusht_dset import load_pusht_slice_train_val
+from .stores.metaworld_lance import load_metaworld_hf_lance_slice_train_val
 from .robocasa_dset import load_robocasa_slice_train_val
 from .stores.point_maze_lance import load_point_maze_lance_slice_train_val
+from .stores.pusht_lance import load_pusht_lance_slice_train_val
+from .stores.wall_lance import load_wall_lance_slice_train_val
 from .wall_dset import load_wall_slice_train_val
 
 # ----------------
@@ -90,7 +93,7 @@ def init_data(
 ) -> tuple[Callable]:
     logger.info(f"📂 Data paths: {data_paths}")
     shuffle = True
-    # ---- Backend dispatch (Phase 1.a: PointMaze supports swm_lance; others raw-only). ----
+    # ---- Backend dispatch: raw by default; selected datasets can opt into swm_lance. ----
     _backend = backend or {}
     _backend_kind = _backend.get("kind", "raw")
     _backend_fallback = bool(_backend.get("fall_back_to_raw_if_unsupported", True))
@@ -108,10 +111,7 @@ def init_data(
         either warn-and-continue (default) or raise.
         """
         if _backend_kind == "swm_lance":
-            msg = (
-                f"data.backend.kind=swm_lance is not implemented for {dataset_label} "
-                f"(Phase 1.a covers PointMaze only)"
-            )
+            msg = f"data.backend.kind=swm_lance is not implemented for {dataset_label}"
             if _backend_fallback:
                 logger.warning(msg + " -- falling back to raw backend.")
             else:
@@ -153,45 +153,93 @@ def init_data(
             datasets = {"train": dataset, "valid": val_dataset}
             traj_dsets = {"train": dataset, "valid": val_dataset}
         elif all("metaworld" in p.lower() for p in data_paths) or all("tdmpc2" in p for p in data_paths):
-            _guard_unsupported_lance("metaworld")
-            datasets, traj_dsets = load_metaworld_hf_slice_train_val(
-                transform,
-                n_rollout=None,
-                data_path=data_paths[0],
-                normalize_action=normalize_action,
-                split_ratio=split_ratio,
-                num_hist=num_hist,
-                num_pred=num_pred,
-                num_frames_val=num_frames_val,
-                frameskip=frameskip,
-                action_skip=action_skip,
-                traj_subset=traj_subset,
-                filter_tasks=filter_tasks,
-                with_reward=with_reward,
-                random_seed=seed,
-                process_actions=process_actions,
-                dset_fraction=dset_fraction,
-            )
+            if _backend_kind == "swm_lance":
+                _uri = _backend.get("lance_uri")
+                if not _uri:
+                    raise ValueError(
+                        "data.backend.kind=swm_lance requires data.backend.lance_uri (path to the .lance directory)"
+                    )
+                datasets, traj_dsets = load_metaworld_hf_lance_slice_train_val(
+                    transform=transform,
+                    lance_uri=_uri,
+                    image_codec=_backend.get("image_codec"),
+                    n_rollout=None,
+                    normalize_action=normalize_action,
+                    split_ratio=split_ratio,
+                    num_hist=num_hist,
+                    num_pred=num_pred,
+                    num_frames_val=num_frames_val,
+                    frameskip=frameskip,
+                    action_skip=action_skip,
+                    traj_subset=traj_subset,
+                    filter_tasks=filter_tasks,
+                    with_reward=with_reward,
+                    random_seed=seed,
+                    process_actions=process_actions,
+                    dset_fraction=dset_fraction,
+                )
+            else:
+                datasets, traj_dsets = load_metaworld_hf_slice_train_val(
+                    transform,
+                    n_rollout=None,
+                    data_path=data_paths[0],
+                    normalize_action=normalize_action,
+                    split_ratio=split_ratio,
+                    num_hist=num_hist,
+                    num_pred=num_pred,
+                    num_frames_val=num_frames_val,
+                    frameskip=frameskip,
+                    action_skip=action_skip,
+                    traj_subset=traj_subset,
+                    filter_tasks=filter_tasks,
+                    with_reward=with_reward,
+                    random_seed=seed,
+                    process_actions=process_actions,
+                    dset_fraction=dset_fraction,
+                )
             dataset = datasets["train"]
             shuffle = True
         elif all("pusht" in p for p in data_paths):
-            _guard_unsupported_lance("pusht")
-            datasets, traj_dsets = load_pusht_slice_train_val(
-                transform,
-                n_rollout=None,
-                data_path=data_paths[0],
-                normalize_action=normalize_action,
-                split_ratio=split_ratio,
-                num_hist=num_hist,
-                num_pred=num_pred,
-                num_frames_val=num_frames_val,
-                frameskip=frameskip,
-                action_skip=action_skip,
-                with_velocity=True,
-                random_seed=seed,
-                process_actions=process_actions,
-                dset_fraction=dset_fraction,
-            )
+            if _backend_kind == "swm_lance":
+                _uri = _backend.get("lance_uri")
+                if not _uri:
+                    raise ValueError(
+                        "data.backend.kind=swm_lance requires data.backend.lance_uri (path to the .lance directory)"
+                    )
+                datasets, traj_dsets = load_pusht_lance_slice_train_val(
+                    transform=transform,
+                    lance_uri=_uri,
+                    image_codec=_backend.get("image_codec"),
+                    n_rollout=None,
+                    normalize_action=normalize_action,
+                    split_ratio=split_ratio,
+                    num_hist=num_hist,
+                    num_pred=num_pred,
+                    num_frames_val=num_frames_val,
+                    frameskip=frameskip,
+                    action_skip=action_skip,
+                    with_velocity=True,
+                    random_seed=seed,
+                    process_actions=process_actions,
+                    dset_fraction=dset_fraction,
+                )
+            else:
+                datasets, traj_dsets = load_pusht_slice_train_val(
+                    transform,
+                    n_rollout=None,
+                    data_path=data_paths[0],
+                    normalize_action=normalize_action,
+                    split_ratio=split_ratio,
+                    num_hist=num_hist,
+                    num_pred=num_pred,
+                    num_frames_val=num_frames_val,
+                    frameskip=frameskip,
+                    action_skip=action_skip,
+                    with_velocity=True,
+                    random_seed=seed,
+                    process_actions=process_actions,
+                    dset_fraction=dset_fraction,
+                )
             dataset = datasets["train"]
             shuffle = False
         elif all("point_maze" in p for p in data_paths):
@@ -241,23 +289,46 @@ def init_data(
             dataset = datasets["train"]
             shuffle = False
         elif all("wall" in p for p in data_paths):
-            _guard_unsupported_lance("wall")
-            datasets, traj_dsets = load_wall_slice_train_val(
-                transform,
-                n_rollout=None,
-                data_path=data_paths[0],
-                normalize_action=normalize_action,
-                split_ratio=split_ratio,
-                num_hist=num_hist,
-                num_pred=num_pred,
-                num_frames_val=num_frames_val,
-                frameskip=frameskip,
-                action_skip=action_skip,
-                traj_subset=traj_subset,
-                random_seed=seed,
-                process_actions=process_actions,
-                dset_fraction=dset_fraction,
-            )
+            if _backend_kind == "swm_lance":
+                _uri = _backend.get("lance_uri")
+                if not _uri:
+                    raise ValueError(
+                        "data.backend.kind=swm_lance requires data.backend.lance_uri (path to the .lance directory)"
+                    )
+                datasets, traj_dsets = load_wall_lance_slice_train_val(
+                    transform=transform,
+                    lance_uri=_uri,
+                    image_codec=_backend.get("image_codec"),
+                    n_rollout=None,
+                    normalize_action=normalize_action,
+                    split_ratio=split_ratio,
+                    num_hist=num_hist,
+                    num_pred=num_pred,
+                    num_frames_val=num_frames_val,
+                    frameskip=frameskip,
+                    action_skip=action_skip,
+                    traj_subset=traj_subset,
+                    random_seed=seed,
+                    process_actions=process_actions,
+                    dset_fraction=dset_fraction,
+                )
+            else:
+                datasets, traj_dsets = load_wall_slice_train_val(
+                    transform,
+                    n_rollout=None,
+                    data_path=data_paths[0],
+                    normalize_action=normalize_action,
+                    split_ratio=split_ratio,
+                    num_hist=num_hist,
+                    num_pred=num_pred,
+                    num_frames_val=num_frames_val,
+                    frameskip=frameskip,
+                    action_skip=action_skip,
+                    traj_subset=traj_subset,
+                    random_seed=seed,
+                    process_actions=process_actions,
+                    dset_fraction=dset_fraction,
+                )
             dataset = datasets["train"]
         elif all("robocasa" in p for p in data_paths):
             _guard_unsupported_lance("robocasa")

@@ -100,18 +100,19 @@ class LanceTrajSlicerDataset(TrajDataset):
             action_step_indices=action_step_indices,
         )
 
-        # ---- Visual: /255.0 + rearrange + transform (bit-identical to point_maze_dset.py:get_frames) ----
+        # ---- Visual: /255.0 + env-specific layout + transform ----
         visual = out["visual"] / 255.0  # uint8 -> float promotion, matches raw
-        visual = rearrange(visual, "T H W C -> T C H W")
+        if getattr(underlying, "visual_layout", "chw") == "chw":
+            visual = rearrange(visual, "T H W C -> T C H W")
         if getattr(underlying, "transform", None) is not None:
             visual = underlying.transform(visual)
         obs = {"visual": visual, "proprio": out["proprio"]}
 
         # ---- State / reward (mirror TrajSlicerDataset.__getitem__ exactly) ----
         state = out["state"]
-        # PointMaze raw flow: reward is None; TrajSlicerDataset substitutes zeros sized to FULL act.
-        # After slicing, length is (end - start) // frameskip == num_frames.
-        reward = torch.zeros(self.num_frames, dtype=torch.float32)
+        reward = out.get("reward")
+        if reward is None:
+            reward = torch.zeros(self.num_frames, dtype=torch.float32)
         # state can never be None here (Lance always stores it); kept for safety symmetry.
         if state is None:
             state = torch.zeros(self.num_frames, dtype=torch.float32)

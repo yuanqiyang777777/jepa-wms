@@ -139,7 +139,10 @@ class LanceWindowDataset(TrajDataset):
         proprio = (raw["proprio"] - self.proprio_mean) / self.proprio_std
         state = raw["state"]  # raw flow does NOT normalize `state`
         visual = raw["visual"]
-        return {"visual": visual, "proprio": proprio, "state": state, "action": action}
+        out = {"visual": visual, "proprio": proprio, "state": state, "action": action}
+        if "reward" in raw:
+            out["reward"] = raw["reward"]
+        return out
 
     # -------- Full-episode parity (NOT on the hot path; kept for raw-equivalence debugging) --------
 
