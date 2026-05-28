@@ -116,6 +116,23 @@ def _compare_sample(raw_sample, lance_sample, sample_idx: int) -> None:
     _assert_tensor_equal(f"idx={sample_idx} reward", rew_r, rew_l)
 
 
+def _read_codec(env: str, lance_uri: str) -> str:
+    from app.plan_common.datasets.stores.lance_store import read_metadata
+
+    if env != "pusht":
+        return read_metadata(lance_uri)["image_codec"]
+
+    root = Path(lance_uri)
+    train_codec = read_metadata(root / "train.lance")["image_codec"]
+    val_codec = read_metadata(root / "val.lance")["image_codec"]
+    if train_codec != val_codec:
+        raise ValueError(
+            f"PushT Lance codec mismatch: train={train_codec} at {root / 'train.lance'} "
+            f"val={val_codec} at {root / 'val.lance'}"
+        )
+    return train_codec
+
+
 def run_audit(env: str, raw_path: str, lance_uri: str, n_windows: int, seed: int) -> int:
     raw_train, lance_train = _build_pair(env, raw_path, lance_uri)
 
@@ -142,9 +159,7 @@ def run_audit(env: str, raw_path: str, lance_uri: str, n_windows: int, seed: int
             print(f"  {failure}")
         return 1
 
-    from app.plan_common.datasets.stores.lance_store import read_metadata
-
-    codec = read_metadata(lance_uri)["image_codec"]
+    codec = _read_codec(env, lance_uri)
     print(f"OK {n_windows}/{n_windows} windows match (env={env}, codec={codec})")
     return 0
 
