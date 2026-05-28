@@ -81,6 +81,12 @@ dev = [
     "jupyterlab",
     "huggingface_hub>=0.20.0",
 ]
+# Phase 1.a - Optional Lance-backed data IO for PointMaze (raw backend remains default).
+# Install with:  pip install -e '.[data-lance]'
+data-lance = [
+    "pylance>=0.20.0",
+    "pyarrow>=15.0.0",
+]
 
 [tool.uv.sources]
 metaworld = { git = "https://github.com/Farama-Foundation/Metaworld.git", branch = "master" }

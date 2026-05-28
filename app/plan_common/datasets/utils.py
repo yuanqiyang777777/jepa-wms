@@ -19,6 +19,7 @@ from .metaworld_hf_dset import load_metaworld_hf_slice_train_val
 from .point_maze_dset import load_point_maze_slice_train_val
 from .pusht_dset import load_pusht_slice_train_val
 from .robocasa_dset import load_robocasa_slice_train_val
+from .stores.point_maze_lance import load_point_maze_lance_slice_train_val
 from .wall_dset import load_wall_slice_train_val
 
 # ----------------
@@ -80,6 +81,8 @@ def init_data(
     # Distributed training parameters
     rank=0,
     world_size=1,
+    # Optional Lance backend (Phase 1.a: PointMaze only; raw otherwise / fall-back per flag).
+    backend=None,
     # Other parameters (deprecated/unused)
     filter_short_videos=False,
     duration=None,
@@ -87,8 +90,36 @@ def init_data(
 ) -> tuple[Callable]:
     logger.info(f"📂 Data paths: {data_paths}")
     shuffle = True
+    # ---- Backend dispatch (Phase 1.a: PointMaze supports swm_lance; others raw-only). ----
+    _backend = backend or {}
+    _backend_kind = _backend.get("kind", "raw")
+    _backend_fallback = bool(_backend.get("fall_back_to_raw_if_unsupported", True))
+    # Validate early so typos like "swl_lance" or "lance" don't silently fall through to raw
+    # and invalidate a benchmark / training comparison.
+    _ALLOWED_BACKEND_KINDS = ("raw", "swm_lance")
+    if _backend_kind not in _ALLOWED_BACKEND_KINDS:
+        raise ValueError(
+            f"data.backend.kind={_backend_kind!r} is not a recognised backend. "
+            f"Expected one of {_ALLOWED_BACKEND_KINDS}."
+        )
+
+    def _guard_unsupported_lance(dataset_label: str):
+        """Called at the top of any non-PointMaze branch. If swm_lance was requested,
+        either warn-and-continue (default) or raise.
+        """
+        if _backend_kind == "swm_lance":
+            msg = (
+                f"data.backend.kind=swm_lance is not implemented for {dataset_label} "
+                f"(Phase 1.a covers PointMaze only)"
+            )
+            if _backend_fallback:
+                logger.warning(msg + " -- falling back to raw backend.")
+            else:
+                raise NotImplementedError(msg)
+
     if dataset_type == "custom":
         if all("droid" in p for p in data_paths) or all("franka_custom" in p for p in data_paths):
+            _guard_unsupported_lance("droid/franka_custom")
             # We never pass the normalize_action argument to DROIDVideoDataset
             dataset = DROIDVideoDataset(
                 data_path=data_paths[0],
@@ -122,6 +153,7 @@ def init_data(
             datasets = {"train": dataset, "valid": val_dataset}
             traj_dsets = {"train": dataset, "valid": val_dataset}
         elif all("metaworld" in p.lower() for p in data_paths) or all("tdmpc2" in p for p in data_paths):
+            _guard_unsupported_lance("metaworld")
             datasets, traj_dsets = load_metaworld_hf_slice_train_val(
                 transform,
                 n_rollout=None,
@@ -143,6 +175,7 @@ def init_data(
             dataset = datasets["train"]
             shuffle = True
         elif all("pusht" in p for p in data_paths):
+            _guard_unsupported_lance("pusht")
             datasets, traj_dsets = load_pusht_slice_train_val(
                 transform,
                 n_rollout=None,
@@ -162,26 +195,53 @@ def init_data(
             dataset = datasets["train"]
             shuffle = False
         elif all("point_maze" in p for p in data_paths):
-            datasets, traj_dsets = load_point_maze_slice_train_val(
-                transform,
-                n_rollout=None,
-                data_path=data_paths[0],
-                normalize_action=normalize_action,
-                split_ratio=split_ratio,
-                # num_frames=16,
-                num_hist=num_hist,
-                num_pred=num_pred,
-                num_frames_val=num_frames_val,
-                frameskip=frameskip,
-                action_skip=action_skip,
-                traj_subset=traj_subset,
-                random_seed=seed,
-                process_actions=process_actions,
-                dset_fraction=dset_fraction,
-            )
+            if _backend_kind == "swm_lance":
+                _uri = _backend.get("lance_uri")
+                if not _uri:
+                    raise ValueError(
+                        "data.backend.kind=swm_lance requires data.backend.lance_uri (path to the .lance directory)"
+                    )
+                datasets, traj_dsets = load_point_maze_lance_slice_train_val(
+                    transform=transform,
+                    lance_uri=_uri,
+                    # No silent default: pass through whatever the user specified (or None to
+                    # trust swm_metadata.json). LanceStore raises on (config, metadata) mismatch.
+                    image_codec=_backend.get("image_codec"),
+                    n_rollout=None,
+                    normalize_action=normalize_action,
+                    split_ratio=split_ratio,
+                    num_hist=num_hist,
+                    num_pred=num_pred,
+                    num_frames_val=num_frames_val,
+                    frameskip=frameskip,
+                    action_skip=action_skip,
+                    traj_subset=traj_subset,
+                    random_seed=seed,
+                    process_actions=process_actions,
+                    dset_fraction=dset_fraction,
+                )
+            else:
+                datasets, traj_dsets = load_point_maze_slice_train_val(
+                    transform,
+                    n_rollout=None,
+                    data_path=data_paths[0],
+                    normalize_action=normalize_action,
+                    split_ratio=split_ratio,
+                    # num_frames=16,
+                    num_hist=num_hist,
+                    num_pred=num_pred,
+                    num_frames_val=num_frames_val,
+                    frameskip=frameskip,
+                    action_skip=action_skip,
+                    traj_subset=traj_subset,
+                    random_seed=seed,
+                    process_actions=process_actions,
+                    dset_fraction=dset_fraction,
+                )
             dataset = datasets["train"]
             shuffle = False
         elif all("wall" in p for p in data_paths):
+            _guard_unsupported_lance("wall")
             datasets, traj_dsets = load_wall_slice_train_val(
                 transform,
                 n_rollout=None,
@@ -200,6 +260,7 @@ def init_data(
             )
             dataset = datasets["train"]
         elif all("robocasa" in p for p in data_paths):
+            _guard_unsupported_lance("robocasa")
             datasets, traj_dsets = load_robocasa_slice_train_val(
                 transform,
                 n_rollout=None,
