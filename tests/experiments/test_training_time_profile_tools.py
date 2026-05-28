@@ -11,6 +11,8 @@ def test_profile_step_exposes_timing_controls():
     assert "NUM_WORKERS=" in script
     assert "BACKEND_KIND=" in script
     assert "LANCE_URI=" in script
+    assert "SCRIPT_DIR=" in script
+    assert 'cd "$REPO_ROOT"' in script
     assert 'cfg["data"]["loader"]["num_workers"] = int(num_workers)' in script
     assert 'backend["fall_back_to_raw_if_unsupported"] = False' in script
     assert 'datasets != ["PointMaze"]' in script
@@ -30,10 +32,14 @@ def test_phase1_launcher_and_lance_converter_are_available():
     assert "PROFILE_STEPS=300" in launcher_text
     assert "PROFILE_IPE=360" in launcher_text
     assert "RUN_LANCE=" in launcher_text
+    assert 'PROFILE_SCRIPT="$SCRIPT_DIR/profile_step.sh"' in launcher_text
+    assert 'SUMMARY_SCRIPT="$SCRIPT_DIR/summarize_training_time_profile.py"' in launcher_text
     assert 'if [ "$RUN_LANCE" = "1" ]; then' in launcher_text
 
     converter_text = converter.read_text()
     assert "JEPAWM_DSET/_lance_20260528" in converter_text
+    assert "SCRIPT_DIR=" in converter_text
+    assert 'cd "$REPO_ROOT"' in converter_text
     assert "convert_point_maze_to_lance" in converter_text
     assert "codec=codec" in converter_text
     assert "mode=mode" in converter_text

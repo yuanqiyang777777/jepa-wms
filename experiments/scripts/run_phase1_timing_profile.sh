@@ -15,7 +15,11 @@
 #   20260528_dino_wm_timing_pusht_raw_r${rep}
 #   20260528_dino_wm_timing_maze_lance_r${rep}
 
-source "$(dirname "$0")/_common.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+source "$SCRIPT_DIR/_common.sh"
+cd "$REPO_ROOT"
 
 unset CUDA_VISIBLE_DEVICES
 
@@ -32,8 +36,8 @@ RUN_PREFIX="${RUN_PREFIX:-${DATE_TAG}_dino_wm_timing}"
 export JEPAWM_DSET_LANCE="${JEPAWM_DSET_LANCE:-$JEPAWM_DSET/_lance_20260528}"
 LANCE_URI="${LANCE_URI:-$JEPAWM_DSET_LANCE/PointMaze.lance}"
 
-PROFILE_SCRIPT="experiments/scripts/profile_step.sh"
-SUMMARY_SCRIPT="experiments/scripts/summarize_training_time_profile.py"
+PROFILE_SCRIPT="$SCRIPT_DIR/profile_step.sh"
+SUMMARY_SCRIPT="$SCRIPT_DIR/summarize_training_time_profile.py"
 
 run_profile() {
   local env_name="$1"

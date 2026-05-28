@@ -18,7 +18,11 @@
 #   BACKEND_KIND=raw|swm_lance  optional data backend override; swm_lance is PointMaze-only
 #   LANCE_URI=...             required when BACKEND_KIND=swm_lance
 
-source "$(dirname "$0")/_common.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+source "$SCRIPT_DIR/_common.sh"
+cd "$REPO_ROOT"
 
 unset CUDA_VISIBLE_DEVICES
 

@@ -13,7 +13,11 @@
 #   JPEG_QUALITY=95
 #   LIMIT=                 # set to an integer for smoke conversion
 
-source "$(dirname "$0")/_common.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+source "$SCRIPT_DIR/_common.sh"
+cd "$REPO_ROOT"
 
 export JEPAWM_DSET_LANCE="${JEPAWM_DSET_LANCE:-$JEPAWM_DSET/_lance_20260528}"
 INPUT_ROOT="${INPUT_ROOT:-$JEPAWM_DSET/point_maze}"
