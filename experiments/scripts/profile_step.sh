@@ -15,7 +15,7 @@
 #   PROFILE_WARMUP=20         steps skipped before measuring
 #   PROFILE_STEPS=200         steps averaged
 #   PROFILE_IPE=240           iterations_per_epoch cap (>= WARMUP+STEPS+margin)
-#   BACKEND_KIND=raw|swm_lance  optional data backend override; swm_lance is PointMaze-only
+#   BACKEND_KIND=raw|swm_lance  optional data backend override for supported Lance datasets
 #   LANCE_URI=...             required when BACKEND_KIND=swm_lance
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -94,9 +94,11 @@ if backend_kind:
     if backend_kind not in {"raw", "swm_lance"}:
         raise ValueError(f"BACKEND_KIND must be raw or swm_lance, got {backend_kind!r}")
     datasets = cfg.get("data", {}).get("datasets")
-    if backend_kind == "swm_lance" and datasets != ["PointMaze"]:
+    supported_lance_datasets = {("PointMaze",), ("Wall",), ("PushT",), ("METAWORLD_HF",)}
+    if backend_kind == "swm_lance" and tuple(datasets or []) not in supported_lance_datasets:
         raise ValueError(
-            f"BACKEND_KIND=swm_lance is supported only for PointMaze timing; datasets={datasets!r}"
+            f"BACKEND_KIND=swm_lance is supported only for {sorted(supported_lance_datasets)} timing; "
+            f"datasets={datasets!r}"
         )
     if backend_kind == "swm_lance" and not lance_uri:
         raise ValueError("LANCE_URI is required when BACKEND_KIND=swm_lance")
