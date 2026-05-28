@@ -29,6 +29,7 @@ TIMING_COLUMNS = [
     "iter_p95_ms",
     "gpu_mean_ms",
     "gpu_median_ms",
+    "primary_step_ms",
     "data_fetch_ms",
     "data_to_device_ms",
     "profiler_step_wall_ms",
@@ -166,10 +167,12 @@ def summarize_run(run_dir: str | Path, warmup: int = 30, measured_steps: int = 3
             status = f"short_rows:{len(iter_times)}"
 
     iter_median = _median(iter_times)
+    profiler_step_wall_ms = sections.get("measured_step_wall_ms", math.nan)
+    primary_step_ms = profiler_step_wall_ms if not math.isnan(profiler_step_wall_ms) else iter_median
     epoch_ref = dataset_size if dataset_size is not None else iterations_per_epoch
     epoch_estimate_min = (
-        (epoch_ref * iter_median / 1000.0 / 60.0)
-        if epoch_ref is not None and not math.isnan(iter_median)
+        (epoch_ref * primary_step_ms / 1000.0 / 60.0)
+        if epoch_ref is not None and not math.isnan(primary_step_ms)
         else math.nan
     )
 
@@ -193,9 +196,10 @@ def summarize_run(run_dir: str | Path, warmup: int = 30, measured_steps: int = 3
         "iter_p95_ms": _percentile(iter_times, 95.0),
         "gpu_mean_ms": _mean(gpu_times),
         "gpu_median_ms": _median(gpu_times),
+        "primary_step_ms": primary_step_ms,
         "data_fetch_ms": sections.get("data_fetch_ms", math.nan),
         "data_to_device_ms": sections.get("data_to_device_ms", math.nan),
-        "profiler_step_wall_ms": sections.get("measured_step_wall_ms", math.nan),
+        "profiler_step_wall_ms": profiler_step_wall_ms,
         "epoch_estimate_min": epoch_estimate_min,
         "fifty_epoch_estimate_h": epoch_estimate_min * 50.0 / 60.0
         if not math.isnan(epoch_estimate_min)
@@ -244,21 +248,21 @@ def write_markdown(rows: list[dict], output_md: str | Path) -> None:
         "",
         "Each run drops the configured warmup rows and summarizes the measured rows from `log_r0.csv`.",
         "",
-        "| env | backend | runs | median iter ms | CV % | data fetch ms | epoch min | 50 epoch h | status |",
+        "| env | backend | runs | step wall ms | CV % | data fetch ms | epoch min | 50 epoch h | status |",
         "|---|---|---:|---:|---:|---:|---:|---:|---|",
     ]
     for (env, backend), group in sorted(_group_rows(rows).items()):
-        medians = [row["iter_median_ms"] for row in group if not math.isnan(row["iter_median_ms"])]
-        median_of_medians = _median(medians)
+        primary_steps = [row["primary_step_ms"] for row in group if not math.isnan(row["primary_step_ms"])]
+        step_mean = _mean(primary_steps)
         cv = (
-            statistics.stdev(medians) / statistics.fmean(medians) * 100.0
-            if len(medians) > 1 and statistics.fmean(medians) != 0
+            statistics.stdev(primary_steps) / statistics.fmean(primary_steps) * 100.0
+            if len(primary_steps) > 1 and statistics.fmean(primary_steps) != 0
             else 0.0
         )
         fetches = [row["data_fetch_ms"] for row in group if not math.isnan(row["data_fetch_ms"])]
         epoch_mins = [row["epoch_estimate_min"] for row in group if not math.isnan(row["epoch_estimate_min"])]
         fifty_hours = [row["fifty_epoch_estimate_h"] for row in group if not math.isnan(row["fifty_epoch_estimate_h"])]
-        status = "stable" if cv <= 5.0 and len(medians) >= 3 else "needs_review"
+        status = "stable" if cv <= 5.0 and len(primary_steps) >= 3 else "needs_review"
         if any(row["status"] != "ok" for row in group):
             status = ",".join(sorted({str(row["status"]) for row in group}))
         lines.append(
@@ -266,7 +270,7 @@ def write_markdown(rows: list[dict], output_md: str | Path) -> None:
                 env=env,
                 backend=backend,
                 runs=len(group),
-                median=_format_float(median_of_medians),
+                median=_format_float(step_mean),
                 cv=_format_float(cv),
                 fetch=_format_float(_mean(fetches)),
                 epoch=_format_float(_mean(epoch_mins)),

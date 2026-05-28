@@ -88,8 +88,9 @@ def test_training_time_summary_parses_run_dir(tmp_path):
     assert math.isclose(summary["iter_median_ms"], 234.5)
     assert math.isclose(summary["gpu_mean_ms"], 134.5)
     assert math.isclose(summary["data_fetch_ms"], 12.5)
+    assert math.isclose(summary["primary_step_ms"], 250.0)
     assert summary["dataset_size"] == 759
-    assert math.isclose(summary["epoch_estimate_min"], 759 * 234.5 / 1000 / 60)
+    assert math.isclose(summary["epoch_estimate_min"], 759 * 250.0 / 1000 / 60)
 
 
 def test_training_time_summary_handles_legacy_shifted_csv(tmp_path):
@@ -122,3 +123,4 @@ def test_training_time_summary_handles_legacy_shifted_csv(tmp_path):
     assert summary["rows_used"] == 5
     assert math.isclose(summary["gpu_median_ms"], 332.0)
     assert math.isclose(summary["iter_median_ms"], 632.0)
+    assert math.isclose(summary["primary_step_ms"], 632.0)
