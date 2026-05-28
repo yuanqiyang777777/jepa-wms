@@ -16,7 +16,9 @@ DEFAULT_T = 25
 DEFAULT_STATE_DIM = 5
 DEFAULT_ACTION_DIM = 2
 DEFAULT_VELOCITY_DIM = 2
-DEFAULT_IMG_SHAPE = (16, 16, 3)
+# decord 0.6 on lab01 fails on 16x16 libx264 clips with a frame-size mismatch.
+# 32x32 is still tiny but exercises the same MP4/decord path as real PushT.
+DEFAULT_IMG_SHAPE = (32, 32, 3)
 
 
 def _write_mp4(path: Path, frames: np.ndarray) -> None:
