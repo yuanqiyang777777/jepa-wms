@@ -88,3 +88,5 @@ def test_mgvt_stage1_configs_use_lance_backend(monkeypatch):
         assert cfg["model"]["predictor"]["pred_depth"] == 1
         assert cfg["model"]["rollout_cfg"]["rollout_steps"] == 1
         assert cfg["evals"] is None
+        assert cfg["optimization"]["transition_model"]["iterations_per_epoch"] == 1000
+        assert cfg["optimization"]["transition_model"]["num_epochs"] == 5

@@ -174,7 +174,7 @@ optimization:
   main_optimizer: transition_model
   train_heads: false
   transition_model:
-    iterations_per_epoch: null
+    iterations_per_epoch: 1000
     ipe_scale: 1.0
     clip_grad: 1
     use_radamw: false
@@ -184,7 +184,7 @@ optimization:
     eps: 1.0e-08
     weight_decay: 1.0e-07
     final_weight_decay: 1.0e-06
-    num_epochs: 50
+    num_epochs: 5
     warmup: 0
     start_lr: 0.0005
     ref_lr: 0.0005
