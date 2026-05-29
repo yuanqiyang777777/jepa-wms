@@ -14,6 +14,11 @@ import src.models.ac_predictor as vit_ac_pred
 import src.models.vision_transformer_v2 as vit_v2_open
 from app.plan_common.models.AdaLN_vit import vit_predictor_AdaLN
 from app.plan_common.models.dino import DinoEncoder
+from app.plan_common.models.mgvt_mixers import (
+    vit_predictor_mgvt_convmixer,
+    vit_predictor_mgvt_mamba,
+    vit_predictor_mgvt_mlp,
+)
 from app.plan_common.models.prop_embedding import ProprioceptiveEmbedding
 from app.plan_common.models.vit import ViTPredictor
 from src.utils.adamw import AdamW as RAdamW
@@ -783,13 +788,50 @@ def init_video_model(
             proprio_tokens=proprio_tokens,
             init_scale_factor_adaln=init_scale_factor_adaln,
         ).to(device)
+    elif pred_type in {"mgvt_mlp", "mgvt_convmixer", "mgvt_mamba"}:
+        assert action_conditioning == "token"
+        assert proprio_encoder_inpred == False
+        mgvt_factories = {
+            "mgvt_mlp": vit_predictor_mgvt_mlp,
+            "mgvt_convmixer": vit_predictor_mgvt_convmixer,
+            "mgvt_mamba": vit_predictor_mgvt_mamba,
+        }
+        predictor = mgvt_factories[pred_type](
+            img_size=img_size,
+            patch_size=encoder.patch_size,
+            num_frames=num_frames_pred,
+            tubelet_size=tubelet_size,
+            embed_dim=embed_dim,
+            predictor_embed_dim=pred_embed_dim,
+            depth=pred_depth,
+            num_heads=pred_num_heads,
+            use_silu=use_SiLU,
+            use_rope=False,
+            local_window=local_window,
+            use_activation_checkpointing=use_activation_checkpointing,
+            action_dim=action_dim,
+            proprio_dim=proprio_dim,
+            use_proprio=use_proprio,
+            act_mlp=act_mlp,
+            prop_mlp=prop_mlp,
+            proprio_encoder_inpred=proprio_encoder_inpred,
+            action_encoder_inpred=action_encoder_inpred,
+            proprio_encoding=proprio_encoding,
+            proprio_emb_dim=proprio_emb_dim,
+            proprio_tokens=proprio_tokens,
+            init_scale_factor_adaln=init_scale_factor_adaln,
+        ).to(device)
     logger.info(f"Predictor: {predictor}")
     pred_params = sum(p.numel() for p in predictor.parameters())
     logger.info(f"🔮 Predictor: {type(predictor).__name__} ({pred_params:,} params)")
     if (action_tokens > 0 or action_emb_dim > 0) and not action_encoder_inpred:
         # Determine the correct output dimension for the action encoder
         if action_conditioning == "token":
-            action_encoder_output_dim = predictor.predictor_total_embed_dim if pred_type == "AdaLN" else embed_dim
+            action_encoder_output_dim = (
+                predictor.predictor_total_embed_dim
+                if pred_type in {"AdaLN", "mgvt_mlp", "mgvt_convmixer", "mgvt_mamba"}
+                else embed_dim
+            )
         elif action_conditioning == "feature":
             action_encoder_output_dim = action_emb_dim
         else:
