@@ -8,7 +8,10 @@
 #   source "$(dirname "$0")/_common.sh"
 #   # ... your command(s) ...
 
-set -euo pipefail
+set -eo pipefail
+# Conda compiler activation/deactivation hooks can read unset CONDA_BACKUP_*
+# variables; keep nounset off until after the env is active.
+set +u
 
 # Footgun 2: load env vars before activating conda
 source ~/.jepawm_env
@@ -16,6 +19,7 @@ source ~/.jepawm_env
 # Activate conda env
 source /home/ps/miniconda3/etc/profile.d/conda.sh
 conda activate jepa-wms
+set -u
 
 # Footgun 1: cd to repo root before any python (avoid ~/datasets.py shadow)
 cd "$JEPAWM_HOME/jepa-wms"
