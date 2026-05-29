@@ -81,7 +81,7 @@ def process_main(rank, fname, world_size, devices):
 if __name__ == "__main__":
     args = parser.parse_args()
     if args.debug:
-        process_main(rank=0, fname=args.fname, world_size=1, devices=["cuda:0"])
+        process_main(rank=0, fname=args.fname, world_size=1, devices=args.devices[:1])
     else:
         num_gpus = len(args.devices)
         mp.set_start_method("spawn")
