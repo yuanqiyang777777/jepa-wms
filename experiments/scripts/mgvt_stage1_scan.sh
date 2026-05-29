@@ -177,14 +177,21 @@ run_one() {
   local run_dir="$RUN_ROOT/$run_id"
   local ckpt_dir="$CKPT_ROOT/$run_id"
   local generated_config="$run_dir/config.yaml"
+  local skill_dir="$RUN_ROOT/skill_scores/$run_id"
+  local skill_json="$skill_dir/skill_score.json"
 
   if [ -n "$CONFIG_FILTER" ] && [[ "$stem" != *"$CONFIG_FILTER"* ]]; then
     return 0
   fi
 
+  if [ -f "$skill_json" ] && [ "$FORCE_RERUN" != "1" ]; then
+    echo "SKIP completed run: $run_id" | tee -a "$RUN_ROOT/scan.log"
+    return 0
+  fi
+
   if [ -e "$run_dir" ] || [ -e "$ckpt_dir" ]; then
-    if [ "$FORCE_RERUN" = "1" ]; then
-      rm -rf "$run_dir" "$ckpt_dir"
+    if [ "$FORCE_RERUN" = "1" ] || [ ! -f "$skill_json" ]; then
+      rm -rf "$run_dir" "$ckpt_dir" "$skill_dir"
     else
       echo "ERROR: run already exists: $run_id (set FORCE_RERUN=1 to overwrite)" >&2
       exit 2

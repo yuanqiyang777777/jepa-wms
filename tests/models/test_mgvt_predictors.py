@@ -105,7 +105,7 @@ def test_stage1_backbone_param_counts_are_matched():
         (vit_predictor_mgvt_mlp, 106),
         (vit_predictor_mgvt_convmixer, 103),
         (vit_predictor_mgvt_mamba, 88),
-        (vit_predictor_AdaLN, 105),
+        (vit_predictor_AdaLN, 104),
     ]
     counts = []
     for factory, width in matched_specs:
