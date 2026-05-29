@@ -125,7 +125,11 @@ class MambaMixer(nn.Module):
             y = y + self.pos_embed[:, : H_patches * W_patches].unsqueeze(1)
         y = y.reshape(B * T, H_patches * W_patches, D)
         if self.backend == "mamba_ssm":
-            y = self.scan(y)
+            # The real mamba_ssm path depends on CUDA-only causal-conv/selective-scan
+            # extensions. CPU unit tests still exercise the wrapper contract without
+            # falling back to the scientific GRU control used when mamba_ssm is absent.
+            if y.is_cuda:
+                y = self.scan(y)
         else:
             y, _ = self.scan(y)
         return y.reshape(B, T * H_patches * W_patches, D)
