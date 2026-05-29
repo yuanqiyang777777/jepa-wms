@@ -83,7 +83,7 @@ def test_mgvt_stage1_configs_use_lance_backend(monkeypatch):
             assert cfg["data"]["custom"]["filter_tasks"] is None
         else:
             assert backend["lance_uri"].endswith("/Metaworld.lance")
-            assert cfg["data"]["custom"]["filter_tasks"] == ["reach-wall"]
+            assert cfg["data"]["custom"]["filter_tasks"] == ["mw-reach-wall"]
         assert cfg["model"]["wm_encoding"]["normalize_reps"] is True
         assert cfg["model"]["predictor"]["pred_depth"] == 1
         assert cfg["model"]["rollout_cfg"]["rollout_steps"] == 1

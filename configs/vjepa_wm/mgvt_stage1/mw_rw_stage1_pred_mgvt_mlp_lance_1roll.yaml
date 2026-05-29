@@ -40,7 +40,7 @@ data:
     traj_subset: true
     filter_first_episodes: null
     filter_tasks:
-    - reach-wall
+    - mw-reach-wall
     num_hist: 2
     num_pred: 1
     with_reward: false
