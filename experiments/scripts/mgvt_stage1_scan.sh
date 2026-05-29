@@ -148,9 +148,15 @@ if not launch_log.exists():
     errors.append(f"missing launch log: {launch_log}")
 else:
     text = launch_log.read_text(errors="replace").lower()
-    for marker in ("traceback", "out of memory", "cuda error"):
+    for marker in ("out of memory", "cuda error"):
         if marker in text:
             errors.append(f"launch.log contains {marker!r}")
+    known_loader_shutdown = (
+        "exception ignored in: <function _multiprocessingdataloaderiter.__del__" in text
+        or "dataloader worker" in text and "is killed by signal: aborted" in text
+    )
+    if "traceback" in text and (cmd_status != 0 or not known_loader_shutdown):
+        errors.append("launch.log contains an unexpected traceback")
 
 if errors:
     print("Training health check failed:", file=sys.stderr)
