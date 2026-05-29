@@ -190,11 +190,4 @@ optimization:
     ref_lr: 0.0005
     final_lr: 0.0005
     mixed_precision: true
-evals:
-  separate: false
-  decode: false
-  eval_episodes: 0
-  nodes: 1
-  low_pri: true
-  dump_eval_configs: false
-  eval_cfg_paths: []
+evals: null
