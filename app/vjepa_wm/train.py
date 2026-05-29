@@ -1458,7 +1458,7 @@ def main(args, resume_preempt=False):
                             save_checkpoint(epoch + 1, save_every_path)
 
             # -- Launch Planning Eval
-            if not light_eval_only_mode:
+            if not light_eval_only_mode and cfgs_plan_evals and cfgs_plan_evals.get("eval_cfg_paths"):
                 if (epoch % eval_freq == 0) or epoch == (num_epochs - 1):
                     if save_every_freq > 0:
                         checkpoint = (
