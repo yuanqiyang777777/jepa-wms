@@ -86,6 +86,39 @@ class CSVLogger(MetricsLogger):
             print(line, file=f)
 
 
+def build_csv_logger_schema(
+    losses: dict[str, Any],
+    total_stats: dict[str, Any],
+    *,
+    leading_columns: list[tuple[str, str]],
+    fixed_columns: list[tuple[str, str]] | None = None,
+    exclude_keys: set[str] | None = None,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Build aligned CSV field names and formatter tuples.
+
+    `fixed_columns` are values supplied positionally by the caller before the
+    metric dict values. If a metric dict contains the same key, keep the fixed
+    column as the single source of truth to avoid duplicate headers and shifted
+    row values.
+    """
+    fixed_columns = fixed_columns or []
+    exclude_keys = exclude_keys or set()
+    fixed_names = {name for _, name in fixed_columns}
+    leading_names = {name for _, name in leading_columns}
+
+    metric_keys = sorted(
+        {
+            key
+            for key in list(losses.keys()) + list(total_stats.keys())
+            if key not in exclude_keys and key not in fixed_names and key not in leading_names
+        }
+    )
+    metric_columns = [("%.5f", key) for key in metric_keys]
+    csv_columns = [*leading_columns, *fixed_columns, *metric_columns]
+    field_names = [name for _, name in csv_columns]
+    return field_names, csv_columns
+
+
 class AverageMeter(object):
     """computes and stores the average and current value"""
 

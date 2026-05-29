@@ -53,7 +53,7 @@ from evals.main_distributed import launch_evals_with_parsed_args as launch_evals
 from src.datasets.utils.utils import get_dataset_paths
 from src.utils.cluster import slurm_account_partition_and_qos
 from src.utils.distributed import init_distributed
-from src.utils.logging import AverageMeter, CSVLogger, get_logger, gpu_timer
+from src.utils.logging import AverageMeter, CSVLogger, build_csv_logger_schema, get_logger, gpu_timer
 from src.utils.yaml_utils import convert_to_dict_recursive, dump_yaml, expand_env_vars
 
 # --
@@ -289,25 +289,34 @@ def main(args, resume_preempt=False):
                 csv_log_file = os.path.join(folder, f"light_eval_only_eval_r{rank}.csv")
             else:
                 csv_log_file = os.path.join(folder, f"eval_r{rank}.csv")
-        # Get all unique keys from eval_losses and eval_total_stats
         excluded_keys = [
             "eval_data/image_rollouts",
             "eval_data/image_rollouts_noisy_actions",
             "eval_data/image_animated_rollout",
         ]
-        all_keys = {key for key in list(losses.keys()) + list(total_stats.keys()) if key not in excluded_keys}
-        # Sort keys lexicographically for consistent order
-        sorted_keys = sorted(all_keys)
-        # Create a format tuple for each key
-        new_columns = [("%.5f", key) for key in sorted_keys]
-        # Initialize the logger with new columns
+        leading_columns = [("%d", "epoch"), ("%d", "itr")]
         if train:
             global train_csv_logger_columns
-            train_csv_logger_columns = ["epoch", "itr", "loss", "gpu-time(ms)", "iter-time(ms)"] + sorted_keys
+            train_csv_logger_columns, csv_columns = build_csv_logger_schema(
+                losses,
+                total_stats,
+                leading_columns=leading_columns,
+                fixed_columns=[
+                    ("%.5f", "loss"),
+                    ("%.5f", "gpu-time(ms)"),
+                    ("%.5f", "iter-time(ms)"),
+                ],
+                exclude_keys=set(excluded_keys),
+            )
         else:
             global eval_csv_logger_columns
-            eval_csv_logger_columns = ["epoch", "itr"] + sorted_keys
-        return CSVLogger(csv_log_file, ("%d", "epoch"), ("%d", "itr"), *new_columns)
+            eval_csv_logger_columns, csv_columns = build_csv_logger_schema(
+                losses,
+                total_stats,
+                leading_columns=leading_columns,
+                exclude_keys=set(excluded_keys),
+            )
+        return CSVLogger(csv_log_file, *csv_columns)
 
     # -- init data-loaders/samplers
     transform = make_transforms(

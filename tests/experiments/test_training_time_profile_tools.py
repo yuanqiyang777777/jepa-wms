@@ -15,7 +15,11 @@ def test_profile_step_exposes_timing_controls():
     assert 'cd "$REPO_ROOT"' in script
     assert 'cfg["data"]["loader"]["num_workers"] = int(num_workers)' in script
     assert 'backend["fall_back_to_raw_if_unsupported"] = False' in script
-    assert 'datasets != ["PointMaze"]' in script
+    assert "supported_lance_datasets" in script
+    assert '("PointMaze",)' in script
+    assert '("Wall",)' in script
+    assert '("PushT",)' in script
+    assert '("METAWORLD_HF",)' in script
 
 
 def test_phase1_launcher_and_lance_converter_are_available():

@@ -87,7 +87,7 @@ Config hygiene:
 | maze | true | `kind=raw` | `kind=swm_lance`, `lance_uri=$JEPAWM_DSET/_lance_20260528/PointMaze.lance` |
 | mw | true | `kind=raw` | `kind=swm_lance`, `lance_uri=$JEPAWM_DSET/_lance_20260528/Metaworld.lance` |
 
-Important audit correction: `log_r0.csv` has a header/value ordering issue in these runs. The values previously reported as "loss" match the logged `act_max` / `train_rollout/visual_l1_loss/1` position rather than the scalar training loss. The literal `loss` column is degenerate zeros, and fields like `act_max < act_mean < act_min` are mathematically inconsistent, which confirms the logger/header issue is in the file itself.
+Important audit correction: `log_r0.csv` has a header/value ordering issue in these historical runs. The values previously reported as "loss" match the logged `act_max` / `train_rollout/visual_l1_loss/1` position rather than the scalar training loss. The literal `loss` column is degenerate zeros, and fields like `act_max < act_mean < act_min` are mathematically inconsistent, which confirms the logger/header issue is in the file itself. A follow-up code fix aligns CSV headers for future runs, but these historical logs are not rewritten.
 
 Because of that, Tier B is not used as a proof of loss-trajectory equivalence. It remains useful for checking that the raw/Lance runs were aligned by `(epoch, itr)` and that selected logged scalar positions do not show monotonic raw-vs-Lance divergence. Tier A and Tier C carry the data-equivalence claim.
 
@@ -164,7 +164,7 @@ The first Tier C run exposed a reporting bug in the audit script: PushT stores m
 - This does not prove 50-epoch checkpoint or final-policy equivalence.
 - Raw mean-wall timing is tail-latency affected in Maze, MW, and PushT; speedup ratios from mean wall-clock should be reported as observed profile results, not guaranteed algorithmic speedups.
 - PushT raw timing remains especially noisy (`raw needs_review` in the timing table), although the Lance data windows matched exactly in this audit.
-- `log_r0.csv` has a header/value ordering issue in these Tier B runs; Tier B should not be used as a literal loss-equivalence proof.
+- `log_r0.csv` has a header/value ordering issue in these historical Tier B runs; Tier B should not be used as a literal loss-equivalence proof. Future runs use the fixed CSV schema, but this report intentionally does not rewrite old logs.
 - Lab01 runs emitted DataLoader worker cleanup warnings after completed training runs; `log_r0.csv` and profiler outputs were complete, so this was not treated as a data-equivalence failure.
 
 ## Recommendation
