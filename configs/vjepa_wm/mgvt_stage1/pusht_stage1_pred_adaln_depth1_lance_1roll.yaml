@@ -65,12 +65,12 @@ data_aug:
   - 1.777
   reprob: 0.0
   normalize:
-  - - 0.5
-    - 0.5
-    - 0.5
-  - - 0.5
-    - 0.5
-    - 0.5
+  - - 0.485
+    - 0.456
+    - 0.406
+  - - 0.229
+    - 0.224
+    - 0.225
 logging:
   write_tag: jepa
   wandb:
@@ -139,7 +139,7 @@ model:
     tubelet_size: 1
     pred_num_heads: 4
     pred_depth: 1
-    pred_embed_dim: 100
+    pred_embed_dim: 105
     pred_use_extrinsics: false
     pred_type: AdaLN
     act_pred_projector: false

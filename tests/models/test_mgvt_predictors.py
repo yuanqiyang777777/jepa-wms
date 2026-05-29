@@ -99,11 +99,13 @@ def test_adaln_zero_blocks_are_identity_at_init(block_cls, kwargs):
 
 
 def test_stage1_backbone_param_counts_are_matched():
+    # Widths are matched for the W=2 ContextStacker
+    # (predictor_embed input = 2 * embed_dim) on the local GRU-fallback Mamba path.
     matched_specs = [
-        (vit_predictor_mgvt_mlp, 112),
-        (vit_predictor_mgvt_convmixer, 108),
-        (vit_predictor_mgvt_mamba, 92),
-        (vit_predictor_AdaLN, 100),
+        (vit_predictor_mgvt_mlp, 106),
+        (vit_predictor_mgvt_convmixer, 103),
+        (vit_predictor_mgvt_mamba, 88),
+        (vit_predictor_AdaLN, 105),
     ]
     counts = []
     for factory, width in matched_specs:
@@ -172,3 +174,21 @@ def test_stage1_predictor_can_overfit_tiny_latent_batch(factory):
 
     final = torch.nn.functional.mse_loss(predictor(x, actions, None)[0], target).item()
     assert final < initial
+
+
+def test_context_window_conditions_on_previous_frame():
+    x = torch.randn(2, 3, 1, 16, 16, 384)
+    x_perturbed = x.clone()
+    x_perturbed[:, 0] += 5.0
+
+    pred_w1 = vit_predictor_mgvt_mlp(**{**PREDICTOR_KWARGS, "context_window": 1})
+    actions_w1 = torch.randn(2, 3, 1, pred_w1.predictor_total_embed_dim)
+    out_w1 = pred_w1(x, actions_w1, None)[0][:, 1]
+    out_w1_perturbed = pred_w1(x_perturbed, actions_w1, None)[0][:, 1]
+    torch.testing.assert_close(out_w1, out_w1_perturbed, rtol=0.0, atol=1e-6)
+
+    pred_w2 = vit_predictor_mgvt_mlp(**{**PREDICTOR_KWARGS, "context_window": 2})
+    actions_w2 = torch.randn(2, 3, 1, pred_w2.predictor_total_embed_dim)
+    out_w2 = pred_w2(x, actions_w2, None)[0][:, 1]
+    out_w2_perturbed = pred_w2(x_perturbed, actions_w2, None)[0][:, 1]
+    assert not torch.allclose(out_w2, out_w2_perturbed, atol=1e-6)

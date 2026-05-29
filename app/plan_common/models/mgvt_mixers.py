@@ -217,13 +217,15 @@ class VisionMGVT(nn.Module):
         action_encoder_inpred=True,
         mixer_type="mlp",
         conv_kernel_size=3,
+        context_window=2,
         **kwargs,
     ):
         super().__init__()
         self.predictor_embed_dim = predictor_embed_dim
         self.proprio_encoder_inpred = proprio_encoder_inpred
         self.action_encoder_inpred = action_encoder_inpred
-        self.predictor_embed = nn.Linear(embed_dim, predictor_embed_dim, bias=True)
+        self.context_window = context_window
+        self.predictor_embed = nn.Linear(context_window * embed_dim, predictor_embed_dim, bias=True)
         if type(img_size) is int:
             img_size = (img_size, img_size)
         self.img_height, self.img_width = img_size
@@ -320,7 +322,23 @@ class VisionMGVT(nn.Module):
     def concat_obs(self, z_vis, proprio):
         return torch.cat([z_vis, proprio], dim=3)
 
+    def _stack_context(self, x):
+        # x: (B, T, V, H, W, D) -> (B, T, V, H, W, context_window * D).
+        # Frame 0 is boundary-padded with itself, giving zero velocity at the
+        # sequence start while exposing [s_{t-1}, s_t] for the W=2 gate.
+        frames = [x]
+        for k in range(1, self.context_window):
+            if k < x.shape[1]:
+                pad = x[:, :1].expand(-1, k, -1, -1, -1, -1)
+                shifted = torch.cat([pad, x[:, :-k]], dim=1)
+            else:
+                shifted = x[:, :1].expand_as(x)
+            frames.insert(0, shifted)
+        return torch.cat(frames, dim=-1)
+
     def forward(self, x, actions, proprio=None):
+        if self.context_window > 1:
+            x = self._stack_context(x)
         x = self.predictor_embed(x)
         x = x.flatten(2, 4)
         B, T, _, D = x.shape

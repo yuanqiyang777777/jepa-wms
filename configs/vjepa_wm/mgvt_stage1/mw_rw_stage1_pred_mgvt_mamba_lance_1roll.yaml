@@ -141,7 +141,7 @@ model:
     tubelet_size: 1
     pred_num_heads: 4
     pred_depth: 1
-    pred_embed_dim: 92
+    pred_embed_dim: 88
     pred_use_extrinsics: false
     pred_type: mgvt_mamba
     act_pred_projector: false
