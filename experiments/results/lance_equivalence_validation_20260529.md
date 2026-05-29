@@ -2,16 +2,20 @@
 
 ## Context
 
-This pass validates whether the Lance data backend can be used as the trusted data source for the Phase-1 training-time estimates, without running 50-epoch training. It covers PointMaze, Wall, PushT, and Metaworld data/backend equivalence plus short loss-trajectory agreement for Maze and MW. It does not claim Terver success-rate equivalence or full-training checkpoint equivalence.
+This pass validates whether the Lance data backend can be used as the trusted data source for the Phase-1 training-time estimates, without running 50-epoch training. It covers PointMaze, Wall, PushT, and Metaworld data/backend equivalence. It does not claim Terver success-rate equivalence or full-training checkpoint equivalence.
 
-Timing table being validated, from `experiments/results/training_time_profile_20260528.{csv,md}`:
+Revision note after independent audit: this report no longer treats the raw-to-Lance mean-wall speedup ratios as clean algorithmic speedups, and no longer treats Tier B as a loss-trajectory proof. The strongest supported claims are: Lance data-window equivalence is robust, Lance absolute step times are stable, and raw mean-wall timings in this profile are heavily tail-latency affected.
 
-| env | raw step ms | swm_lance step ms | speedup | raw CV % | lance CV % | status |
-|---|---:|---:|---:|---:|---:|---|
-| maze | 848.5 | 231.2 | 3.67x | 1.30 | 0.17 | stable |
-| mw | 841.1 | 236.8 | 3.55x | 1.93 | 0.09 | stable |
-| pusht | 1384.5 | 230.2 | 6.01x | 7.22 | 0.20 | raw needs_review |
-| wall | 307.1 | 235.9 | 1.30x | 1.12 | 0.44 | stable |
+Timing table being validated, from `experiments/results/training_time_profile_20260528.{csv,md}`. `mean step` is the wall-clock mean used by `fifty_epoch_estimate_h`; `median step` shows the typical-step behavior.
+
+| env | raw mean step ms | raw median step ms | raw p95 ms | Lance mean step ms | Lance median step ms | mean-wall ratio | median-step ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| maze | 848.5 | 237.9 | 4943.6 | 231.2 | 231.1 | 3.67x | 1.03x |
+| mw | 841.1 | 244.0 | 4159.6 | 236.8 | 236.8 | 3.55x | 1.03x |
+| pusht | 1384.5 | 233.3 | 8745.1 | 230.2 | 230.1 | 6.01x | 1.01x |
+| wall | 307.1 | 262.8 | 337.2 | 235.9 | 230.5 | 1.30x | 1.14x |
+
+Interpretation: the Lance absolute step time is stable and repeatable. The raw mean-wall baseline is tail-heavy, with multi-second p95 events in Maze, MW, and PushT. Therefore the mean-wall speedup ratios are best described as observed under this profiling condition and as an upper-bound view of wall-clock savings under raw tail latency. They should not be presented as guaranteed per-step algorithmic speedups.
 
 Canonical validation environment: lab01, worktree `$JEPAWM_HOME/worktrees/phase1-timing-profile`, commit `b5aa861`.
 
@@ -63,7 +67,7 @@ src/checkpoint.py
 app/vjepa_wm/train.py
 ```
 
-## Tier B - Short Smoke-Train Loss Comparison
+## Tier B - Short Smoke-Train Metric Comparison
 
 Runs used 6 GPUs (`cuda:0` through `cuda:5`), `BATCH_SIZE=32`, `NUM_WORKERS=16`, `PROFILE_WARMUP=30`, `PROFILE_STEPS=300`, and `PROFILE_IPE=360`. The raw/Lance pair differs only in backend fields after ignoring the run `folder`.
 
@@ -83,27 +87,32 @@ Config hygiene:
 | maze | true | `kind=raw` | `kind=swm_lance`, `lance_uri=$JEPAWM_DSET/_lance_20260528/PointMaze.lance` |
 | mw | true | `kind=raw` | `kind=swm_lance`, `lance_uri=$JEPAWM_DSET/_lance_20260528/Metaworld.lance` |
 
-Loss comparison reads `log_r0.csv`, aligns by `(epoch, itr)`, discards the first 30 warmup rows, and compares the following 300 measured rows. Timing columns are intentionally not compared.
+Important audit correction: `log_r0.csv` has a header/value ordering issue in these runs. The values previously reported as "loss" match the logged `act_max` / `train_rollout/visual_l1_loss/1` position rather than the scalar training loss. The literal `loss` column is degenerate zeros, and fields like `act_max < act_mean < act_min` are mathematically inconsistent, which confirms the logger/header issue is in the file itself.
+
+Because of that, Tier B is not used as a proof of loss-trajectory equivalence. It remains useful for checking that the raw/Lance runs were aligned by `(epoch, itr)` and that selected logged scalar positions do not show monotonic raw-vs-Lance divergence. Tier A and Tier C carry the data-equivalence claim.
+
+The earlier report's compared scalar position:
 
 | env | rows | step mismatch | first5 max abs | mean abs diff | max abs diff | last abs diff | monotonic nondecreasing |
 |---|---:|---|---:|---:|---:|---:|---|
 | maze | 300 | none | 0.000010000 | 0.000088800 | 0.001750000 | 0.000030000 | false |
 | mw | 300 | none | 0.000000000 | 0.000126467 | 0.001030000 | 0.000100000 | false |
 
-First five measured losses:
+First five values from that scalar position:
 
 | env | raw | swm_lance |
 |---|---|---|
 | maze | `[1.24794, 1.24677, 1.24481, 1.24453, 1.24116]` | `[1.24794, 1.24676, 1.24481, 1.24453, 1.24116]` |
 | mw | `[1.07581, 1.08662, 1.08183, 1.08227, 1.10542]` | `[1.07581, 1.08662, 1.08183, 1.08227, 1.10542]` |
 
-Pass criteria:
+Recomputed named rollout-loss column, using `train_rollout/loss/1` from the same 300 measured rows:
 
-| criterion | maze | mw |
-|---|---|---|
-| first five measured losses within `atol=1e-4, rtol=1e-4` | pass | pass |
-| mean absolute loss diff over 300 rows `< 1e-3` | pass | pass |
-| no monotonic growth trend in diff trace | pass | pass |
+| env | first5 max abs | mean abs diff | max abs diff | last abs diff | monotonic nondecreasing | status under original `<1e-3` criterion |
+|---|---:|---:|---:|---:|---|---|
+| maze | 0.000000000 | 0.000456267 | 0.008880000 | 0.000720000 | false | pass |
+| mw | 0.000100000 | 0.002718100 | 0.021820000 | 0.003220000 | false | fail |
+
+Interpretation: the MW named rollout-loss diff fails the originally planned mean-abs `<1e-3` threshold, but the non-monotonic trace and Tier C's exact data-window match point to train-side nondeterminism / logging noise rather than a data backend mismatch. Do not cite Tier B as "loss equivalence passed."
 
 ## Tier C - Real-Dataset 256-Window Audit
 
@@ -146,16 +155,29 @@ The first Tier C run exposed a reporting bug in the audit script: PushT stores m
 | tier | scope | result | evidence |
 |---|---|---|---|
 | A | tiny fixture equivalence, codec authority, JPEG xfail, diff hygiene | pass | `29 passed, 1 xfailed`, no forbidden path diff |
-| B | Maze and MW short loss trajectory, 300 measured rows | pass | first5 loss max `<=1e-5`, mean abs diff `<1.3e-4`, no monotonic growth |
+| B | Maze and MW short run log alignment / scalar comparison | limited | configs and steps align, but CSV header/value ordering makes this inconclusive as a loss proof |
 | C | real dataset 256 sampled train windows per env | pass | all four envs report `OK 256/256` |
 
 ## Remaining Risks
 
 - This does not prove Terver success-rate equivalence.
 - This does not prove 50-epoch checkpoint or final-policy equivalence.
-- PushT raw timing remains noisy (`raw needs_review` in the timing table), although the Lance data windows matched exactly in this audit.
+- Raw mean-wall timing is tail-latency affected in Maze, MW, and PushT; speedup ratios from mean wall-clock should be reported as observed profile results, not guaranteed algorithmic speedups.
+- PushT raw timing remains especially noisy (`raw needs_review` in the timing table), although the Lance data windows matched exactly in this audit.
+- `log_r0.csv` has a header/value ordering issue in these Tier B runs; Tier B should not be used as a literal loss-equivalence proof.
 - Lab01 runs emitted DataLoader worker cleanup warnings after completed training runs; `log_r0.csv` and profiler outputs were complete, so this was not treated as a data-equivalence failure.
 
 ## Recommendation
 
-The Lance timing numbers in `experiments/results/training_time_profile_20260528.{csv,md}` are safe to cite as train-time estimates for the measured configs. State the boundary explicitly: this validates data/backend equivalence and short-run loss alignment, not Terver success-rate equivalence or long-run checkpoint identity.
+The Lance absolute timing numbers in `experiments/results/training_time_profile_20260528.{csv,md}` are safe to cite as Lance train-time estimates for the measured configs. The mean-wall raw-to-Lance ratios can be cited only with the tail-latency caveat: they describe the observed profile condition, where raw runs had severe long-tail stalls, and should not be presented as guaranteed algorithmic speedups.
+
+For one serial four-env 50-epoch pass, the mean-wall estimates are:
+
+| backend | estimate h | estimate days | interpretation |
+|---|---:|---:|---|
+| raw mean-wall | 263.8 | 11.0 | includes severe raw tail latency |
+| Lance mean-wall | 51.9 | 2.16 | stable absolute Lance estimate |
+| raw median-typical-step | 53.0 | 2.21 | typical-step view, removes most raw tail stalls |
+| Lance median-typical-step | 51.9 | 2.16 | near identical to Lance mean-wall |
+
+State the boundary explicitly: this validates data/backend equivalence and stable Lance absolute timing, not Terver success-rate equivalence, long-run checkpoint identity, or clean raw-to-Lance algorithmic speedup.
