@@ -1,0 +1,29 @@
+{
+  "backend": {
+    "fall_back_to_raw_if_unsupported": false,
+    "kind": "swm_lance",
+    "lance_uri": "/home/ps/Code/yqy/DINO-WM/jepawm_data/_lance_20260528/Metaworld.lance"
+  },
+  "change_mse_model": 0.1516041139644735,
+  "change_mse_persist": 0.3255025128523509,
+  "change_skill": 0.5342459490220842,
+  "checkpoint": "/home/ps/Code/yqy/DINO-WM/jepawm_checkpoints/mgvt_stage1_3seed_mamba_ssm/mw_rw_stage1_pred_mgvt_mlp_lance_1roll_seed3/jepa-latest.pth.tar",
+  "config": "/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage1_3seed_mamba_ssm/mw_rw_stage1_pred_mgvt_mlp_lance_1roll_seed3/config.yaml",
+  "deterministic_encode_max_abs_diff": 0.0,
+  "diagnostic_batch_time_ms": 9.449007226078301,
+  "latent_mean": -1.0342503951783213e-09,
+  "latent_std": 0.9999995440898645,
+  "mamba_backend": null,
+  "model": "mgvt_mlp",
+  "mse_model": 0.04871481238042607,
+  "mse_persist": 0.06495267659133556,
+  "normalization_note": "Validation loader uses train-split dataset statistics; no val statistics are recomputed.",
+  "num_batches": 638,
+  "num_val_windows": 2550,
+  "param_count": 283934,
+  "seed": 3,
+  "skill": 0.2499953052446735,
+  "task": "METAWORLD_HF:mw-reach-wall",
+  "top_k_patches": 32,
+  "train_step_time_ms": 37.89495805999989
+}
