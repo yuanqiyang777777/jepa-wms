@@ -90,3 +90,42 @@ def test_mgvt_stage1_configs_use_lance_backend(monkeypatch):
         assert cfg["evals"] is None
         assert cfg["optimization"]["transition_model"]["iterations_per_epoch"] == 1000
         assert cfg["optimization"]["transition_model"]["num_epochs"] == 5
+
+
+def test_mgvt_stage2_configs_use_lance_backend_and_h4_proprio(monkeypatch):
+    from pathlib import Path
+
+    from src.utils.yaml_utils import load_yaml
+
+    monkeypatch.setenv("JEPAWM_DSET_LANCE", "/tmp/jepawm_lance")
+    config_dir = Path("configs/vjepa_wm/mgvt_stage2")
+    config_paths = sorted(config_dir.glob("*_lance_h4.yaml"))
+
+    assert len(config_paths) == 6
+    for path in config_paths:
+        cfg = load_yaml(path)
+        backend = cfg["data"]["backend"]
+        assert backend["kind"] == "swm_lance"
+        assert backend["fall_back_to_raw_if_unsupported"] is False
+        if path.name.startswith("pusht_"):
+            assert backend["lance_uri"].endswith("/PushT.lance")
+            assert cfg["data"]["custom"]["filter_tasks"] is None
+            assert cfg["data_aug"]["normalize"] == [[0.485, 0.456, 0.406], [0.229, 0.224, 0.225]]
+        else:
+            assert backend["lance_uri"].endswith("/Metaworld.lance")
+            assert cfg["data"]["custom"]["filter_tasks"] == ["mw-reach-wall"]
+            assert cfg["data_aug"]["normalize"] == [[0.5, 0.5, 0.5], [0.5, 0.5, 0.5]]
+        assert cfg["data"]["custom"]["num_hist"] == 2
+        assert cfg["data"]["custom"]["num_pred"] == 4
+        assert cfg["data"]["validation"]["num_frames_val"] >= 6
+        assert cfg["model"]["num_frames_pred"] == 6
+        assert cfg["model"]["proprio_encoder"]["proprio_emb_dim"] == 16
+        assert cfg["model"]["proprio_encoder"]["proprio_encoder_inpred"] is False
+        assert cfg["model"]["rollout_cfg"]["rollout_steps"] == 4
+        assert cfg["model"]["rollout_cfg"]["train_rollout_prefixes"] == "all"
+        assert cfg["model"]["rollout_cfg"]["ctxt_window_train_rollout"] == 2
+        assert cfg["model"]["rollout_cfg"]["rollout_stop_gradient"] is True
+        assert cfg["model"]["rollout_cfg"]["do_sequential_rollout"] is True
+        assert cfg["model"]["rollout_cfg"]["do_parallel_rollout"] is False
+        assert cfg["evals"] is None
+        assert cfg["optimization"]["transition_model"]["num_epochs"] == 10

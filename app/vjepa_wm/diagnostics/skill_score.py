@@ -4,11 +4,11 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Stage-1 MGVT persistence skill diagnostic.
+"""MGVT persistence skill diagnostic.
 
-This script evaluates H=1 latent prediction on the validation split and compares
-the model to the copy-last-frame baseline. It intentionally does not run CEM,
-planning, H=4 rollout, or any Terver protocol evaluation.
+This script evaluates latent prediction on the validation split and compares
+the model to the copy-last-observed-frame baseline. It intentionally does not
+run CEM, planning, or any Terver protocol evaluation.
 """
 
 from __future__ import annotations
@@ -61,6 +61,7 @@ def _build_val_loader_and_preprocessor(
     config: dict[str, Any],
     batch_size: int | None,
     num_workers: int | None,
+    min_eval_frames: int | None = None,
 ):
     from app.plan_common.datasets.preprocessor import Preprocessor
     from app.plan_common.datasets.transforms import make_inverse_transforms, make_transforms
@@ -73,6 +74,11 @@ def _build_val_loader_and_preprocessor(
     cfgs_loader = cfgs_data.get("loader", {})
     cfgs_custom = cfgs_data.get("custom", {})
     cfgs_droid = cfgs_data.get("droid", {})
+
+    if min_eval_frames is not None:
+        num_hist = int(cfgs_custom.get("num_hist", 1))
+        cfgs_custom["num_pred"] = max(int(cfgs_custom.get("num_pred", 1)), max(0, min_eval_frames - num_hist))
+        cfgs_validation["num_frames_val"] = max(int(cfgs_validation.get("num_frames_val", 0)), min_eval_frames)
 
     transform = make_transforms(img_size=cfgs_data.get("img_size", 224), **cfgs_data_aug)
     inverse_transform = make_inverse_transforms(img_size=cfgs_data.get("img_size", 224), **cfgs_data_aug)
@@ -188,7 +194,71 @@ def _safe_skill(model_mse: float, persist_mse: float) -> float | None:
     return 1.0 - (model_mse / persist_mse)
 
 
+def _finalize_horizon_metrics(
+    model_sums: dict[int, float],
+    persist_sums: dict[int, float],
+    counts: dict[int, int],
+    prefix: str,
+) -> dict[str, dict[str, float | None]]:
+    model_key = f"{prefix}_mse_model"
+    persist_key = f"{prefix}_mse_persist"
+    skill_key = f"{prefix}_skill"
+    out: dict[str, dict[str, float | None]] = {
+        model_key: {},
+        persist_key: {},
+        skill_key: {},
+    }
+    for horizon in sorted(counts):
+        key = str(horizon)
+        count = counts[horizon]
+        model_mse = model_sums[horizon] / count if count > 0 else None
+        persist_mse = persist_sums[horizon] / count if count > 0 else None
+        out[model_key][key] = model_mse
+        out[persist_key][key] = persist_mse
+        out[skill_key][key] = (
+            _safe_skill(model_mse, persist_mse)
+            if model_mse is not None and persist_mse is not None
+            else None
+        )
+    return out
+
+
+def _add_patch_mse(
+    model_patch_mse: torch.Tensor,
+    persist_patch_mse: torch.Tensor,
+    horizon: int,
+    model_sums: dict[int, float],
+    persist_sums: dict[int, float],
+    counts: dict[int, int],
+) -> None:
+    model_sums[horizon] += float(model_patch_mse.sum().detach().cpu())
+    persist_sums[horizon] += float(persist_patch_mse.sum().detach().cpu())
+    counts[horizon] += int(model_patch_mse.numel())
+
+
 def _make_markdown(results: dict[str, Any]) -> str:
+    if "skill_by_horizon" in results:
+        rows = [
+            "| Horizon | Skill | Change skill | Proprio skill | MSE model | MSE persist |",
+            "| ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+        for horizon in sorted(results["skill_by_horizon"], key=lambda h: int(h)):
+            skill = results["skill_by_horizon"].get(horizon)
+            change_skill = results["change_skill_by_horizon"].get(horizon)
+            proprio_skill = results["proprio_skill_by_horizon"].get(horizon)
+            mse_model = results["mse_model_by_horizon"].get(horizon)
+            mse_persist = results["mse_persist_by_horizon"].get(horizon)
+            rows.append(
+                "| "
+                f"{horizon} | "
+                f"{'n/a' if skill is None else f'{skill:.4f}'} | "
+                f"{'n/a' if change_skill is None else f'{change_skill:.4f}'} | "
+                f"{'n/a' if proprio_skill is None else f'{proprio_skill:.4f}'} | "
+                f"{'n/a' if mse_model is None else f'{mse_model:.6g}'} | "
+                f"{'n/a' if mse_persist is None else f'{mse_persist:.6g}'} |"
+            )
+        return "\n".join(rows) + "\n"
+
     skill = "n/a" if results["skill"] is None else f"{results['skill']:.4f}"
     change_skill = "n/a" if results["change_skill"] is None else f"{results['change_skill']:.4f}"
     rows = [
@@ -218,11 +288,16 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
     config = load_yaml(args.config)
     device = torch.device(args.device)
     checkpoint_folder, checkpoint_name = _resolve_checkpoint(config, args.checkpoint)
+    ctxt_window = _nested_get(config, ["model", "rollout_cfg", "ctxt_window_train_rollout"], 2)
+    prefix = args.prefix if args.prefix is not None else max(0, ctxt_window - 1)
+    max_horizon = max(1, int(args.max_horizon))
+    min_eval_frames = prefix + max_horizon + 1
 
     val_dataset, _val_traj_dataset, val_loader, traj_dataset, preprocessor = _build_val_loader_and_preprocessor(
         config=config,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        min_eval_frames=min_eval_frames,
     )
 
     model = init_module(
@@ -234,7 +309,7 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
         proprio_dim=traj_dataset.proprio_dim,
         preprocessor=preprocessor,
         cfgs_data=config["data"],
-        wrapper_kwargs={"ctxt_window": _nested_get(config, ["model", "rollout_cfg", "ctxt_window_train_rollout"], 2)},
+        wrapper_kwargs={"ctxt_window": ctxt_window},
     )
     model.eval()
 
@@ -245,16 +320,21 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
         task = f"{task}:{','.join(filter_tasks)}"
     seed = int(config.get("meta", {}).get("seed", config["data"].get("seed", -1)))
 
-    mse_model_sum = 0.0
-    mse_persist_sum = 0.0
-    mse_model_top_sum = 0.0
-    mse_persist_top_sum = 0.0
-    num_patch_steps = 0
-    num_top_patch_steps = 0
+    horizons = list(range(1, max_horizon + 1))
+    mse_model_sums = {h: 0.0 for h in horizons}
+    mse_persist_sums = {h: 0.0 for h in horizons}
+    mse_model_top_sums = {h: 0.0 for h in horizons}
+    mse_persist_top_sums = {h: 0.0 for h in horizons}
+    proprio_model_sums = {h: 0.0 for h in horizons}
+    proprio_persist_sums = {h: 0.0 for h in horizons}
+    counts = {h: 0 for h in horizons}
+    top_counts = {h: 0 for h in horizons}
+    proprio_counts = {h: 0 for h in horizons}
     latent_means = []
     latent_stds = []
     deterministic_max_abs = None
     batch_times = []
+    evaluated_batches = 0
 
     max_batches = args.max_batches if args.max_batches and args.max_batches > 0 else None
     top_k = args.top_k_patches
@@ -271,49 +351,113 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
         # The validation loader already applies the train-time image transform.
         # Use the underlying VideoWM path to avoid double-transforming through EncPredWM.encode().
         video_features, proprio_features, action_features = model.model.encode(obs, action)
+        available_horizon = min(max_horizon, video_features.shape[1] - prefix - 1)
+        if available_horizon < 1:
+            continue
+
+        context_start = max(0, prefix - ctxt_window + 1)
         pred_video_features, _pred_action_features, _pred_proprio_features = model.model.forward_pred(
-            video_features,
-            action_features,
-            proprio_features,
+            video_features[:, context_start : prefix + 1],
+            action_features[:, context_start : prefix + 1],
+            proprio_features[:, context_start : prefix + 1] if proprio_features is not None else None,
         )
+        pred_by_horizon = {
+            1: pred_video_features[:, -1:],
+        }
+        pred_prop_by_horizon = {}
+        if _pred_proprio_features is not None:
+            pred_prop_by_horizon[1] = _pred_proprio_features[:, -1:]
+
+        vid_context = torch.cat([video_features[:, : prefix + 1], pred_by_horizon[1]], dim=1)
+        prop_context = None
+        if proprio_features is not None and 1 in pred_prop_by_horizon:
+            prop_context = torch.cat([proprio_features[:, : prefix + 1], pred_prop_by_horizon[1]], dim=1)
+        act_context = action_features[:, : prefix + 1]
+
+        for horizon in range(2, available_horizon + 1):
+            act_context = torch.cat(
+                [act_context, action_features[:, prefix + horizon - 1 : prefix + horizon]],
+                dim=1,
+            )
+            next_vid_feats, _next_act_feats, next_prop_feats = model.model.forward_pred(
+                vid_context[:, -ctxt_window:].detach(),
+                act_context[:, -ctxt_window:],
+                prop_context[:, -ctxt_window:].detach() if prop_context is not None else None,
+            )
+            pred_by_horizon[horizon] = next_vid_feats[:, -1:]
+            vid_context = torch.cat([vid_context.detach(), pred_by_horizon[horizon]], dim=1)
+            if prop_context is not None and next_prop_feats is not None:
+                pred_prop_by_horizon[horizon] = next_prop_feats[:, -1:]
+                prop_context = torch.cat([prop_context.detach(), pred_prop_by_horizon[horizon]], dim=1)
+
         if device.type == "cuda":
             torch.cuda.synchronize(device)
         batch_times.append((time.perf_counter() - start) * 1000.0)
+        evaluated_batches += 1
 
         if batch_idx == 0:
             video_features_2, _proprio_features_2, _action_features_2 = model.model.encode(obs, action)
             deterministic_max_abs = float((video_features - video_features_2).abs().max().detach().cpu())
 
-        current = video_features[:, :-1].reshape(video_features.shape[0], -1, video_features.shape[3] * video_features.shape[4], video_features.shape[-1])
-        target = video_features[:, 1:].reshape(video_features.shape[0], -1, video_features.shape[3] * video_features.shape[4], video_features.shape[-1])
-        pred = pred_video_features[:, :-1].reshape(pred_video_features.shape[0], -1, pred_video_features.shape[3] * pred_video_features.shape[4], pred_video_features.shape[-1])
+        persistent_visual = video_features[:, prefix : prefix + 1]
+        persistent_proprio = proprio_features[:, prefix : prefix + 1] if proprio_features is not None else None
 
-        model_patch_mse = (pred - target).pow(2).mean(dim=-1)
-        persist_patch_mse = (current - target).pow(2).mean(dim=-1)
-        change_score = persist_patch_mse
+        for horizon in range(1, available_horizon + 1):
+            target = video_features[:, prefix + horizon : prefix + horizon + 1]
+            pred = pred_by_horizon[horizon]
+            B = pred.shape[0]
+            model_patch_mse = (
+                pred.reshape(B, 1, -1, pred.shape[-1])
+                - target.reshape(B, 1, -1, target.shape[-1])
+            ).pow(2).mean(dim=-1)
+            persist_patch_mse = (
+                persistent_visual.reshape(B, 1, -1, persistent_visual.shape[-1])
+                - target.reshape(B, 1, -1, target.shape[-1])
+            ).pow(2).mean(dim=-1)
 
-        mse_model_sum += float(model_patch_mse.sum().detach().cpu())
-        mse_persist_sum += float(persist_patch_mse.sum().detach().cpu())
-        num_patch_steps += int(model_patch_mse.numel())
+            _add_patch_mse(model_patch_mse, persist_patch_mse, horizon, mse_model_sums, mse_persist_sums, counts)
 
-        k = min(top_k, change_score.shape[-1])
-        top_idx = change_score.topk(k=k, dim=-1).indices
-        model_top = model_patch_mse.gather(dim=-1, index=top_idx)
-        persist_top = persist_patch_mse.gather(dim=-1, index=top_idx)
-        mse_model_top_sum += float(model_top.sum().detach().cpu())
-        mse_persist_top_sum += float(persist_top.sum().detach().cpu())
-        num_top_patch_steps += int(model_top.numel())
+            k = min(top_k, persist_patch_mse.shape[-1])
+            top_idx = persist_patch_mse.topk(k=k, dim=-1).indices
+            _add_patch_mse(
+                model_patch_mse.gather(dim=-1, index=top_idx),
+                persist_patch_mse.gather(dim=-1, index=top_idx),
+                horizon,
+                mse_model_top_sums,
+                mse_persist_top_sums,
+                top_counts,
+            )
+
+            if persistent_proprio is not None and horizon in pred_prop_by_horizon:
+                prop_target = proprio_features[:, prefix + horizon : prefix + horizon + 1]
+                prop_pred = pred_prop_by_horizon[horizon]
+                prop_model_mse = (
+                    prop_pred.reshape(B, 1, -1, prop_pred.shape[-1])
+                    - prop_target.reshape(B, 1, -1, prop_target.shape[-1])
+                ).pow(2).mean(dim=-1)
+                prop_persist_mse = (
+                    persistent_proprio.reshape(B, 1, -1, persistent_proprio.shape[-1])
+                    - prop_target.reshape(B, 1, -1, prop_target.shape[-1])
+                ).pow(2).mean(dim=-1)
+                _add_patch_mse(
+                    prop_model_mse,
+                    prop_persist_mse,
+                    horizon,
+                    proprio_model_sums,
+                    proprio_persist_sums,
+                    proprio_counts,
+                )
 
         latent_means.append(float(video_features.mean().detach().cpu()))
         latent_stds.append(float(video_features.std().detach().cpu()))
 
-    if num_patch_steps == 0:
+    if not any(counts.values()):
         raise RuntimeError("No validation batches were evaluated")
 
-    mse_model = mse_model_sum / num_patch_steps
-    mse_persist = mse_persist_sum / num_patch_steps
-    mse_model_top = mse_model_top_sum / num_top_patch_steps
-    mse_persist_top = mse_persist_top_sum / num_top_patch_steps
+    visual_metrics = _finalize_horizon_metrics(mse_model_sums, mse_persist_sums, counts, "visual")
+    change_metrics = _finalize_horizon_metrics(mse_model_top_sums, mse_persist_top_sums, top_counts, "change")
+    proprio_metrics = _finalize_horizon_metrics(proprio_model_sums, proprio_persist_sums, proprio_counts, "proprio")
+    h1 = "1"
 
     train_log_csv = _as_path(args.train_log_csv)
     results = {
@@ -324,14 +468,28 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
         "config": str(Path(args.config).resolve()),
         "backend": _nested_get(config, ["data", "backend"], {}),
         "num_val_windows": len(val_dataset),
-        "num_batches": min(len(val_loader), max_batches) if max_batches is not None else len(val_loader),
+        "num_batches": evaluated_batches,
+        "max_horizon": max_horizon,
+        "prefix": prefix,
         "top_k_patches": top_k,
-        "mse_model": mse_model,
-        "mse_persist": mse_persist,
-        "skill": _safe_skill(mse_model, mse_persist),
-        "change_mse_model": mse_model_top,
-        "change_mse_persist": mse_persist_top,
-        "change_skill": _safe_skill(mse_model_top, mse_persist_top),
+        "mse_model": visual_metrics["visual_mse_model"].get(h1),
+        "mse_persist": visual_metrics["visual_mse_persist"].get(h1),
+        "skill": visual_metrics["visual_skill"].get(h1),
+        "change_mse_model": change_metrics["change_mse_model"].get(h1),
+        "change_mse_persist": change_metrics["change_mse_persist"].get(h1),
+        "change_skill": change_metrics["change_skill"].get(h1),
+        "proprio_mse_model": proprio_metrics["proprio_mse_model"].get(h1),
+        "proprio_mse_persist": proprio_metrics["proprio_mse_persist"].get(h1),
+        "proprio_skill": proprio_metrics["proprio_skill"].get(h1),
+        "mse_model_by_horizon": visual_metrics["visual_mse_model"],
+        "mse_persist_by_horizon": visual_metrics["visual_mse_persist"],
+        "skill_by_horizon": visual_metrics["visual_skill"],
+        "change_mse_model_by_horizon": change_metrics["change_mse_model"],
+        "change_mse_persist_by_horizon": change_metrics["change_mse_persist"],
+        "change_skill_by_horizon": change_metrics["change_skill"],
+        "proprio_mse_model_by_horizon": proprio_metrics["proprio_mse_model"],
+        "proprio_mse_persist_by_horizon": proprio_metrics["proprio_mse_persist"],
+        "proprio_skill_by_horizon": proprio_metrics["proprio_skill"],
         "param_count": _count_predictor_params(model),
         "mamba_backend": _mamba_backend(model),
         "train_step_time_ms": _read_train_step_time_ms(train_log_csv),
@@ -351,6 +509,8 @@ def main() -> None:
     parser.add_argument("--output", default=None, help="Output directory or JSON filename.")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--max-batches", type=int, default=None)
+    parser.add_argument("--max-horizon", type=int, default=6)
+    parser.add_argument("--prefix", type=int, default=None, help="Observed prefix index; defaults to ctxt_window - 1.")
     parser.add_argument("--top-k-patches", type=int, default=32)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)

@@ -8,6 +8,7 @@ from app.plan_common.models.mgvt_mixers import (
     vit_predictor_mgvt_mlp,
 )
 from app.plan_common.models.AdaLN_vit import FWAdaLNBlock, vit_predictor_AdaLN
+from app.vjepa_wm.diagnostics.skill_score import _finalize_horizon_metrics
 from app.vjepa_wm.utils import init_video_model
 
 
@@ -192,3 +193,66 @@ def test_context_window_conditions_on_previous_frame():
     out_w2 = pred_w2(x, actions_w2, None)[0][:, 1]
     out_w2_perturbed = pred_w2(x_perturbed, actions_w2, None)[0][:, 1]
     assert not torch.allclose(out_w2, out_w2_perturbed, atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        vit_predictor_mgvt_mlp,
+        vit_predictor_mgvt_convmixer,
+        vit_predictor_mgvt_mamba,
+        vit_predictor_AdaLN,
+    ],
+)
+def test_stage2_predictors_return_proprio_features(factory):
+    kwargs = dict(PREDICTOR_KWARGS)
+    kwargs.update(
+        {
+            "use_proprio": True,
+            "proprio_dim": 7,
+            "proprio_emb_dim": 16,
+            "proprio_encoder_inpred": False,
+            "predictor_embed_dim": 96,
+            "action_dim": 112,
+        }
+    )
+    predictor = factory(**kwargs)
+    x = torch.randn(2, 3, 1, 16, 16, 384)
+    actions = torch.randn(2, 3, 1, predictor.predictor_total_embed_dim)
+    proprio = torch.randn(2, 3, 16 * 16, 16)
+
+    pred, action_features, proprio_features = predictor(x, actions, proprio)
+
+    assert pred.shape == (2, 3, 16 * 16, 384)
+    assert action_features is None
+    assert proprio_features.shape == (2, 3, 16 * 16, 16)
+    assert torch.isfinite(pred).all()
+    assert torch.isfinite(proprio_features).all()
+
+
+def test_multi_horizon_skill_metric_math_is_well_defined():
+    perfect = _finalize_horizon_metrics(
+        model_sums={1: 0.0, 2: 0.0},
+        persist_sums={1: 10.0, 2: 20.0},
+        counts={1: 10, 2: 10},
+        prefix="visual",
+    )
+    assert perfect["visual_skill"]["1"] == pytest.approx(1.0)
+    assert perfect["visual_skill"]["2"] == pytest.approx(1.0)
+
+    persistence = _finalize_horizon_metrics(
+        model_sums={1: 10.0, 2: 20.0},
+        persist_sums={1: 10.0, 2: 20.0},
+        counts={1: 10, 2: 10},
+        prefix="visual",
+    )
+    assert persistence["visual_skill"]["1"] == pytest.approx(0.0)
+    assert persistence["visual_skill"]["2"] == pytest.approx(0.0)
+
+    degenerate = _finalize_horizon_metrics(
+        model_sums={1: 0.0},
+        persist_sums={1: 0.0},
+        counts={1: 10},
+        prefix="visual",
+    )
+    assert degenerate["visual_skill"]["1"] is None
