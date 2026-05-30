@@ -2,8 +2,8 @@ app: vjepa_wm
 nodes: 1
 tasks_per_node: 6
 cpus_per_task: 16
-folder: ${JEPAWM_LOGS}/mgvt_stage2/mw_rw_stage2_pred_mgvt_convmixer_lance_h4
-checkpoint_folder: ${JEPAWM_CKPT}/mgvt_stage2/mw_rw_stage2_pred_mgvt_convmixer_lance_h4
+folder: ${JEPAWM_LOGS}/mgvt_stage2b/mw_rw_stage2_pred_adaln_depth1_lance_h4
+checkpoint_folder: ${JEPAWM_CKPT}/mgvt_stage2b/mw_rw_stage2_pred_adaln_depth1_lance_h4
 data:
   dataset_type: custom
   datasets:
@@ -141,12 +141,12 @@ model:
     tubelet_size: 1
     pred_num_heads: 4
     pred_depth: 1
-    pred_embed_dim: 103
+    pred_embed_dim: 104
     pred_use_extrinsics: false
-    pred_type: mgvt_convmixer
+    pred_type: AdaLN
     act_pred_projector: false
     use_SiLU: false
-    use_rope: false
+    use_rope: true
     use_sdpa: true
     init_scale_factor_adaln: 0
   wm_encoding:

@@ -2,8 +2,8 @@ app: vjepa_wm
 nodes: 1
 tasks_per_node: 6
 cpus_per_task: 16
-folder: ${JEPAWM_LOGS}/mgvt_stage2/mw_rw_stage2_pred_mgvt_convmixer_lance_h4
-checkpoint_folder: ${JEPAWM_CKPT}/mgvt_stage2/mw_rw_stage2_pred_mgvt_convmixer_lance_h4
+folder: ${JEPAWM_LOGS}/mgvt_stage2b/mw_rw_stage2_pred_mgvt_convmixer_lance_h4
+checkpoint_folder: ${JEPAWM_CKPT}/mgvt_stage2b/mw_rw_stage2_pred_mgvt_convmixer_lance_h4
 data:
   dataset_type: custom
   datasets:

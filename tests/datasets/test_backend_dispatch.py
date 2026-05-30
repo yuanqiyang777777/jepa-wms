@@ -114,7 +114,7 @@ def test_mgvt_stage2_configs_use_lance_backend_and_h4_proprio(monkeypatch):
         else:
             assert backend["lance_uri"].endswith("/Metaworld.lance")
             assert cfg["data"]["custom"]["filter_tasks"] == ["mw-reach-wall"]
-            assert cfg["data_aug"]["normalize"] == [[0.5, 0.5, 0.5], [0.5, 0.5, 0.5]]
+            assert cfg["data_aug"]["normalize"] == [[0.485, 0.456, 0.406], [0.229, 0.224, 0.225]]
         assert cfg["data"]["custom"]["num_hist"] == 2
         assert cfg["data"]["custom"]["num_pred"] == 4
         assert cfg["data"]["validation"]["num_frames_val"] >= 6

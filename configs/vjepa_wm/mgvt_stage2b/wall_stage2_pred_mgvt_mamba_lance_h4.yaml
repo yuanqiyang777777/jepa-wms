@@ -2,18 +2,18 @@ app: vjepa_wm
 nodes: 1
 tasks_per_node: 6
 cpus_per_task: 16
-folder: ${JEPAWM_LOGS}/mgvt_stage2/mw_rw_stage2_pred_mgvt_convmixer_lance_h4
-checkpoint_folder: ${JEPAWM_CKPT}/mgvt_stage2/mw_rw_stage2_pred_mgvt_convmixer_lance_h4
+folder: ${JEPAWM_LOGS}/mgvt_stage2b/wall_stage2_pred_mgvt_mamba_lance_h4
+checkpoint_folder: ${JEPAWM_CKPT}/mgvt_stage2b/wall_stage2_pred_mgvt_mamba_lance_h4
 data:
   dataset_type: custom
   datasets:
-  - METAWORLD_HF
+  - Wall
   datasets_weights:
-  seed: 1
+  seed: 234
   img_size: 224
   backend:
     kind: swm_lance
-    lance_uri: ${JEPAWM_DSET_LANCE}/Metaworld.lance
+    lance_uri: ${JEPAWM_DSET_LANCE}/Wall.lance
     fall_back_to_raw_if_unsupported: false
   validation:
     val_datasets: []
@@ -24,7 +24,6 @@ data:
     val_dataset_fpcs:
     - 8
     val_dataset_camera_views:
-    - exterior_image_2_left
     val_viz_rank0_loader: false
   loader:
     batch_size: 8
@@ -40,7 +39,6 @@ data:
     traj_subset: true
     filter_first_episodes:
     filter_tasks:
-    - mw-reach-wall
     num_hist: 2
     num_pred: 4
     with_reward: false
@@ -95,7 +93,7 @@ meta:
   load_opt_scale_epoch: true
   read_checkpoint:
   pretrained_path:
-  seed: 1
+  seed: 234
   eval_freq: 999999
   light_eval_freq: 999999
   save_every_freq: 1
@@ -141,9 +139,9 @@ model:
     tubelet_size: 1
     pred_num_heads: 4
     pred_depth: 1
-    pred_embed_dim: 103
+    pred_embed_dim: 88
     pred_use_extrinsics: false
-    pred_type: mgvt_convmixer
+    pred_type: mgvt_mamba
     act_pred_projector: false
     use_SiLU: false
     use_rope: false
