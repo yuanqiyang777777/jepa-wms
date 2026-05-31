@@ -1,0 +1,106 @@
+{
+  "backend": {
+    "fall_back_to_raw_if_unsupported": false,
+    "kind": "swm_lance",
+    "lance_uri": "/home/ps/Code/yqy/DINO-WM/jepawm_data/_lance_20260528/Metaworld.lance"
+  },
+  "change_mse_model": 0.18871270936396387,
+  "change_mse_model_by_horizon": {
+    "1": 0.18871270936396387,
+    "2": 0.21535041517681547,
+    "3": 0.23841852446397147,
+    "4": 0.25803433799081377,
+    "5": 0.2731948106818729,
+    "6": 0.2872438692384296
+  },
+  "change_mse_persist": 0.36586323191722236,
+  "change_mse_persist_by_horizon": {
+    "1": 0.36586323191722236,
+    "2": 0.5839193457696172,
+    "3": 0.7243582096364763,
+    "4": 0.8165948856539197,
+    "5": 0.8809100200732549,
+    "6": 0.9294144584072961
+  },
+  "change_skill": 0.4841987581669298,
+  "change_skill_by_horizon": {
+    "1": 0.4841987581669298,
+    "2": 0.6311983551547186,
+    "3": 0.6708554948474688,
+    "4": 0.684011812314765,
+    "5": 0.6898720590564351,
+    "6": 0.6909410364341986
+  },
+  "checkpoint": "/home/ps/Code/yqy/DINO-WM/jepawm_checkpoints/mgvt_stage2b_1seed_20260530/mw_r_stage2_pred_mgvt_mamba_lance_h4_seed1/jepa-latest.pth.tar",
+  "config": "/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/mw_r_stage2_pred_mgvt_mamba_lance_h4_seed1/config.yaml",
+  "deterministic_encode_max_abs_diff": 0.0,
+  "diagnostic_batch_time_ms": 24.28431070720156,
+  "latent_mean": -1.1503019865028502e-09,
+  "latent_std": 0.9999992305702633,
+  "mamba_backend": "mamba_ssm",
+  "max_horizon": 6,
+  "model": "mgvt_mamba",
+  "mse_model": 0.06479417031837834,
+  "mse_model_by_horizon": {
+    "1": 0.06479417031837834,
+    "2": 0.07385798309412267,
+    "3": 0.08280333937042289,
+    "4": 0.08975277173850271,
+    "5": 0.09615390128559537,
+    "6": 0.10177138283848762
+  },
+  "mse_persist": 0.07269920655836662,
+  "mse_persist_by_horizon": {
+    "1": 0.07269920655836662,
+    "2": 0.11999370098941856,
+    "3": 0.15494093913171025,
+    "4": 0.1804698207974434,
+    "5": 0.19918452680110932,
+    "6": 0.2133948761059178
+  },
+  "normalization_note": "Validation loader uses train-split dataset statistics; no val statistics are recomputed.",
+  "num_batches": 450,
+  "num_val_windows": 1800,
+  "param_count": 363176,
+  "prefix": 1,
+  "proprio_mse_model": 0.22920777074992657,
+  "proprio_mse_model_by_horizon": {
+    "1": 0.22920777074992657,
+    "2": 0.5374171362486151,
+    "3": 0.7468602790021234,
+    "4": 0.8897922987325324,
+    "5": 0.9455638592027955,
+    "6": 0.9456509017530415
+  },
+  "proprio_mse_persist": 0.38962642652913926,
+  "proprio_mse_persist_by_horizon": {
+    "1": 0.38962642652913926,
+    "2": 1.0365909118867582,
+    "3": 1.4572802438255814,
+    "4": 1.7115028615709809,
+    "5": 1.8797972161819538,
+    "6": 1.951078684710794
+  },
+  "proprio_skill": 0.4117242693424321,
+  "proprio_skill_by_horizon": {
+    "1": 0.4117242693424321,
+    "2": 0.4815533012242684,
+    "3": 0.48749714945596057,
+    "4": 0.4801105398586386,
+    "5": 0.49698624348251497,
+    "6": 0.515318931438578
+  },
+  "seed": 1,
+  "skill": 0.108736210671594,
+  "skill_by_horizon": {
+    "1": 0.108736210671594,
+    "2": 0.3844844980601464,
+    "3": 0.46558127351974765,
+    "4": 0.5026715749929187,
+    "5": 0.5172621948611128,
+    "6": 0.5230842244404512
+  },
+  "task": "METAWORLD_HF:mw-reach",
+  "top_k_patches": 32,
+  "train_step_time_ms": 114.36842430899975
+}

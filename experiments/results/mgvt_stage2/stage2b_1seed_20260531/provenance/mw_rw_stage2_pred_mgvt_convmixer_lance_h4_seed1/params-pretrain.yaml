@@ -1,0 +1,195 @@
+app: vjepa_wm
+checkpoint_folder: /home/ps/Code/yqy/DINO-WM/jepawm_checkpoints/mgvt_stage2b_1seed_20260530/mw_rw_stage2_pred_mgvt_convmixer_lance_h4_seed1
+cpus_per_task: 16
+data:
+  backend:
+    fall_back_to_raw_if_unsupported: false
+    kind: swm_lance
+    lance_uri: /home/ps/Code/yqy/DINO-WM/jepawm_data/_lance_20260528/Metaworld.lance
+  custom:
+    action_skip: 1
+    custom_teleop_dset: null
+    filter_first_episodes: null
+    filter_tasks:
+    - mw-reach-wall
+    frameskip: 5
+    normalize_action: true
+    num_hist: 2
+    num_pred: 4
+    split_ratio: 0.9
+    state_skip: 1
+    traj_subset: true
+    with_reward: false
+  dataset_type: custom
+  datasets:
+  - METAWORLD_HF
+  datasets_weights: null
+  droid:
+    camera_frame: false
+    camera_views:
+    - 2
+    dataset_fpcs:
+    - 8
+    droid_to_rcasa_action_format: 1
+    fps: 4
+    mpk_manifest_patterns: []
+    rcasa_to_droid_action_format: false
+  img_size: 224
+  loader:
+    batch_size: 8
+    num_workers: 16
+    persistent_workers: true
+    pin_mem: true
+  seed: 1
+  validation:
+    num_frames_val: 6
+    val_dataset_batch_size: 4
+    val_dataset_camera_views:
+    - exterior_image_2_left
+    val_dataset_drop_last: false
+    val_dataset_fpcs:
+    - 8
+    val_datasets: []
+    val_datasets_1: null
+    val_viz_rank0_loader: false
+data_aug:
+  auto_augment: false
+  motion_shift: false
+  normalize:
+  - - 0.485
+    - 0.456
+    - 0.406
+  - - 0.229
+    - 0.224
+    - 0.225
+  random_horizontal_flip: false
+  random_resize_aspect_ratio:
+  - 1.0
+  - 1.0
+  random_resize_scale:
+  - 1.777
+  - 1.777
+  reprob: 0.0
+evals: null
+folder: /home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/mw_rw_stage2_pred_mgvt_convmixer_lance_h4_seed1
+logging:
+  wandb:
+    debug: false
+    disable_wandb_media: true
+    log_media_locally: true
+    project: vjepa_wm
+    use_wandb: false
+  write_tag: jepa
+loss:
+  cos_loss_weight: 0.0
+  l1_loss_weight: 0.0
+  l2_loss_weight: 1.0
+  smooth_l1_loss_weight: 0.0
+meta:
+  data_traj_rollout_eval:
+    data_traj_decode_gt: false
+    data_traj_eval_ctxt_window: 2
+    data_traj_eval_rollout_steps: 4
+    do_data_traj_rollout_eval: false
+  dtype: bfloat16
+  energy_landscape_eval:
+    do_energy_landscape_eval: false
+    energy_landscape_ctxt_window: 2
+    energy_landscape_rollout_steps: 4
+  eval_freq: 999999
+  freeze_encoder: true
+  light_eval_freq: 999999
+  light_eval_only_mode: false
+  load_checkpoint: true
+  load_opt_scale_epoch: true
+  plan_only_eval_mode: false
+  pretrained_path: null
+  quick_debug: false
+  read_checkpoint: null
+  save_every_freq: 1
+  seed: 1
+model:
+  action_conditioning: token
+  action_encoder:
+    act_mlp: false
+    action_emb_dim: 0
+    action_encoder_inpred: false
+    action_tokens: 1
+  attn:
+    local_window_h: -1
+    local_window_time: 3
+    local_window_w: -1
+  grid_size: 16
+  heads_cfg:
+    architectures: {}
+    pretrain_dec_path: null
+  num_frames_pred: 6
+  predictor:
+    act_pred_projector: false
+    init_scale_factor_adaln: 0
+    pred_depth: 1
+    pred_embed_dim: 103
+    pred_num_heads: 4
+    pred_type: mgvt_convmixer
+    pred_use_extrinsics: false
+    tubelet_size: 1
+    use_SiLU: false
+    use_rope: false
+    use_sdpa: true
+  proprio_encoder:
+    prop_mlp: false
+    proprio_emb_dim: 16
+    proprio_encoder_inpred: false
+    proprio_tokens: 0
+  proprio_encoding: feature
+  rollout_cfg:
+    ctxt_window_train_rollout: 2
+    do_parallel_rollout: false
+    do_sequential_rollout: true
+    prepend_gt: false
+    rollout_steps: 4
+    rollout_stop_gradient: true
+    sampling_scheduler:
+      end: 0.0
+      start: 0.0
+      type: linear
+    train_rollout_prefixes: all
+  tubelet_size_enc: 1
+  use_activation_checkpointing: false
+  visual_encoder:
+    embed_dim: 384
+    enc_name: null
+    enc_type: dino
+    enc_use_rope: null
+    enc_version: dinov2_vits14
+    num_frames_enc: 16
+    pretrain_enc_ckpt_key: target_encoder
+    pretrain_enc_path: null
+    uniform_power: true
+    use_sdpa_enc: true
+  wm_encoding:
+    batchify_video: true
+    dup_image: false
+    normalize_reps: true
+nodes: 1
+optimization:
+  main_optimizer: transition_model
+  train_heads: false
+  transition_model:
+    betas:
+    - 0.9
+    - 0.999
+    clip_grad: 1
+    eps: 1.0e-08
+    final_lr: 0.0005
+    final_weight_decay: 1.0e-06
+    ipe_scale: 1.0
+    iterations_per_epoch: 1000
+    mixed_precision: true
+    num_epochs: 10
+    ref_lr: 0.0005
+    start_lr: 0.0005
+    use_radamw: false
+    warmup: 0
+    weight_decay: 1.0e-07
+tasks_per_node: 6

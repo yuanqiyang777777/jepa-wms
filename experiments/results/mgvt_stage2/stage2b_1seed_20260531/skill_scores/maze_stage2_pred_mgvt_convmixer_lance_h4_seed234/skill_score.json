@@ -1,0 +1,106 @@
+{
+  "backend": {
+    "fall_back_to_raw_if_unsupported": false,
+    "kind": "swm_lance",
+    "lance_uri": "/home/ps/Code/yqy/DINO-WM/jepawm_data/_lance_20260528/PointMaze.lance"
+  },
+  "change_mse_model": 0.03876379127446257,
+  "change_mse_model_by_horizon": {
+    "1": 0.03876379127446257,
+    "2": 0.0433024262832325,
+    "3": 0.047313601540737465,
+    "4": 0.050631737155748195,
+    "5": 0.054059516338051346,
+    "6": 0.0569810579289667
+  },
+  "change_mse_persist": 0.08129396153033756,
+  "change_mse_persist_by_horizon": {
+    "1": 0.08129396153033756,
+    "2": 0.11272557421541606,
+    "3": 0.1243772961101571,
+    "4": 0.12865963661218766,
+    "5": 0.13066361507919969,
+    "6": 0.1325838941323464
+  },
+  "change_skill": 0.523165182939245,
+  "change_skill_by_horizon": {
+    "1": 0.523165182939245,
+    "2": 0.6158597852827742,
+    "3": 0.6195961560473764,
+    "4": 0.6064675877457596,
+    "5": 0.5862695494435538,
+    "6": 0.5702263966384356
+  },
+  "checkpoint": "/home/ps/Code/yqy/DINO-WM/jepawm_checkpoints/mgvt_stage2b_1seed_20260530/maze_stage2_pred_mgvt_convmixer_lance_h4_seed234/jepa-latest.pth.tar",
+  "config": "/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/maze_stage2_pred_mgvt_convmixer_lance_h4_seed234/config.yaml",
+  "deterministic_encode_max_abs_diff": 0.0,
+  "diagnostic_batch_time_ms": 23.946521762476042,
+  "latent_mean": -3.4351427035104427e-10,
+  "latent_std": 0.9999994022142692,
+  "mamba_backend": null,
+  "max_horizon": 6,
+  "model": "mgvt_convmixer",
+  "mse_model": 0.009382924311412652,
+  "mse_model_by_horizon": {
+    "1": 0.009382924311412652,
+    "2": 0.010171739899049528,
+    "3": 0.01128192883336031,
+    "4": 0.01204035726330075,
+    "5": 0.012983018085360527,
+    "6": 0.013741629977450997
+  },
+  "mse_persist": 0.013442790249026702,
+  "mse_persist_by_horizon": {
+    "1": 0.013442790249026702,
+    "2": 0.018266810762894447,
+    "3": 0.02012365223839879,
+    "4": 0.020734256756965254,
+    "5": 0.02106619944032587,
+    "6": 0.021407271593686987
+  },
+  "normalization_note": "Validation loader uses train-split dataset statistics; no val statistics are recomputed.",
+  "num_batches": 3050,
+  "num_val_windows": 12200,
+  "param_count": 336279,
+  "prefix": 1,
+  "proprio_mse_model": 0.037178779449390215,
+  "proprio_mse_model_by_horizon": {
+    "1": 0.037178779449390215,
+    "2": 0.061966533497143844,
+    "3": 0.08885985467491335,
+    "4": 0.11613099530079692,
+    "5": 0.14450467443673826,
+    "6": 0.17090198631719
+  },
+  "proprio_mse_persist": 0.3988758833352171,
+  "proprio_mse_persist_by_horizon": {
+    "1": 0.3988758833352171,
+    "2": 0.6807615409742613,
+    "3": 0.8601044438877067,
+    "4": 0.9495849983540715,
+    "5": 0.9692186232155464,
+    "6": 0.9459366014379947
+  },
+  "proprio_skill": 0.9067911072022747,
+  "proprio_skill_by_horizon": {
+    "1": 0.9067911072022747,
+    "2": 0.908974685308366,
+    "3": 0.896687134560934,
+    "4": 0.8777034225455453,
+    "5": 0.8509060071944143,
+    "6": 0.8193304011522674
+  },
+  "seed": 234,
+  "skill": 0.30201065868062593,
+  "skill_by_horizon": {
+    "1": 0.30201065868062593,
+    "2": 0.443157317876666,
+    "3": 0.4393697177974093,
+    "4": 0.41930123638234407,
+    "5": 0.38370382744464826,
+    "6": 0.35808587669325365
+  },
+  "task": "PointMaze",
+  "top_k_patches": 32,
+  "train_step_time_ms": 94.16746330799967
+}

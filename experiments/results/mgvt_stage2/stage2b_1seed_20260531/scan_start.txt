@@ -1,0 +1,14 @@
+MGVT Stage-2b scan starting 2026-05-30T17:31:25+08:00
+commit=dde363e8d8a4cf8a262dc98f08eb66eb7f617e55
+devices=cuda:1 cuda:2 cuda:3 cuda:4 cuda:5 cuda:7
+run_root=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530
+ckpt_root=/home/ps/Code/yqy/DINO-WM/jepawm_checkpoints/mgvt_stage2b_1seed_20260530
+pusht_seeds=234
+wall_seeds=234
+maze_seeds=234
+mw_r_seeds=1
+mw_rw_seeds=1
+task_filter=
+config_filter=
+quick_debug=0
+skill_max_horizon=6

@@ -1,0 +1,45 @@
+
+=== RUN pusht_stage2_pred_adaln_depth1_lance_h4_seed234 2026-05-30T17:31:27+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/pusht_stage2_pred_adaln_depth1_lance_h4_seed234/config.yaml
+
+=== RUN pusht_stage2_pred_mgvt_convmixer_lance_h4_seed234 2026-05-30T18:17:48+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/pusht_stage2_pred_mgvt_convmixer_lance_h4_seed234/config.yaml
+
+=== RUN pusht_stage2_pred_mgvt_mamba_lance_h4_seed234 2026-05-30T18:36:03+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/pusht_stage2_pred_mgvt_mamba_lance_h4_seed234/config.yaml
+
+=== RUN wall_stage2_pred_adaln_depth1_lance_h4_seed234 2026-05-30T18:57:15+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/wall_stage2_pred_adaln_depth1_lance_h4_seed234/config.yaml
+
+=== RUN wall_stage2_pred_mgvt_convmixer_lance_h4_seed234 2026-05-30T19:50:52+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/wall_stage2_pred_mgvt_convmixer_lance_h4_seed234/config.yaml
+
+=== RUN wall_stage2_pred_mgvt_mamba_lance_h4_seed234 2026-05-30T20:09:47+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/wall_stage2_pred_mgvt_mamba_lance_h4_seed234/config.yaml
+
+=== RUN maze_stage2_pred_adaln_depth1_lance_h4_seed234 2026-05-30T20:31:55+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/maze_stage2_pred_adaln_depth1_lance_h4_seed234/config.yaml
+
+=== RUN maze_stage2_pred_mgvt_convmixer_lance_h4_seed234 2026-05-30T21:28:54+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/maze_stage2_pred_mgvt_convmixer_lance_h4_seed234/config.yaml
+
+=== RUN maze_stage2_pred_mgvt_mamba_lance_h4_seed234 2026-05-30T21:50:06+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/maze_stage2_pred_mgvt_mamba_lance_h4_seed234/config.yaml
+
+=== RUN mw_r_stage2_pred_adaln_depth1_lance_h4_seed1 2026-05-30T22:14:24+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/mw_r_stage2_pred_adaln_depth1_lance_h4_seed1/config.yaml
+
+=== RUN mw_r_stage2_pred_mgvt_convmixer_lance_h4_seed1 2026-05-30T23:07:30+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/mw_r_stage2_pred_mgvt_convmixer_lance_h4_seed1/config.yaml
+
+=== RUN mw_r_stage2_pred_mgvt_mamba_lance_h4_seed1 2026-05-30T23:26:40+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/mw_r_stage2_pred_mgvt_mamba_lance_h4_seed1/config.yaml
+
+=== RUN mw_rw_stage2_pred_adaln_depth1_lance_h4_seed1 2026-05-30T23:49:15+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/mw_rw_stage2_pred_adaln_depth1_lance_h4_seed1/config.yaml
+
+=== RUN mw_rw_stage2_pred_mgvt_convmixer_lance_h4_seed1 2026-05-31T00:43:50+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/mw_rw_stage2_pred_mgvt_convmixer_lance_h4_seed1/config.yaml
+
+=== RUN mw_rw_stage2_pred_mgvt_mamba_lance_h4_seed1 2026-05-31T01:03:20+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2b_1seed_20260530/mw_rw_stage2_pred_mgvt_mamba_lance_h4_seed1/config.yaml
