@@ -26,6 +26,7 @@ def _yaml() -> YAML:
     yaml = YAML()
     yaml.preserve_quotes = True
     yaml.default_flow_style = False
+    yaml.width = 4096
     return yaml
 
 
