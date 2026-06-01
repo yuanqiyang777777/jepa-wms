@@ -14,6 +14,13 @@ import src.models.ac_predictor as vit_ac_pred
 import src.models.vision_transformer_v2 as vit_v2_open
 from app.plan_common.models.AdaLN_vit import vit_predictor_AdaLN
 from app.plan_common.models.dino import DinoEncoder
+from app.plan_common.models.mgvt_dynamics_guided import (
+    vit_predictor_mgvt_d_gru,
+    vit_predictor_mgvt_d_mamba,
+    vit_predictor_mgvt_d_mlp,
+    vit_predictor_mgvt_d_raw_action,
+    vit_predictor_mgvt_d_sparse_control,
+)
 from app.plan_common.models.mgvt_mixers import (
     vit_predictor_mgvt_convmixer,
     vit_predictor_mgvt_mamba,
@@ -608,7 +615,7 @@ def init_video_model(
     proprio_encoder_inpred=False,
     prop_mlp=False,
     use_proprio=True,
-    # discard other kwargs
+    # Extra predictor kwargs are handled explicitly by the relevant factories.
     **kwargs,
 ):
 
@@ -788,14 +795,52 @@ def init_video_model(
             proprio_tokens=proprio_tokens,
             init_scale_factor_adaln=init_scale_factor_adaln,
         ).to(device)
-    elif pred_type in {"mgvt_mlp", "mgvt_convmixer", "mgvt_mamba"}:
+    elif pred_type in {
+        "mgvt_mlp",
+        "mgvt_convmixer",
+        "mgvt_mamba",
+        "mgvt_d_raw_action",
+        "mgvt_d_mlp",
+        "mgvt_d_gru",
+        "mgvt_d_mamba",
+        "mgvt_d_sparse_control",
+    }:
         assert action_conditioning == "token"
         assert proprio_encoder_inpred == False
         mgvt_factories = {
             "mgvt_mlp": vit_predictor_mgvt_mlp,
             "mgvt_convmixer": vit_predictor_mgvt_convmixer,
             "mgvt_mamba": vit_predictor_mgvt_mamba,
+            "mgvt_d_raw_action": vit_predictor_mgvt_d_raw_action,
+            "mgvt_d_mlp": vit_predictor_mgvt_d_mlp,
+            "mgvt_d_gru": vit_predictor_mgvt_d_gru,
+            "mgvt_d_mamba": vit_predictor_mgvt_d_mamba,
+            "mgvt_d_sparse_control": vit_predictor_mgvt_d_sparse_control,
         }
+        mgvt_d_pred_types = {
+            "mgvt_d_raw_action",
+            "mgvt_d_mlp",
+            "mgvt_d_gru",
+            "mgvt_d_mamba",
+            "mgvt_d_sparse_control",
+        }
+        mgvt_d_kwarg_names = {
+            "d_h_dim",
+            "state_dim",
+            "fdyn_hidden_dim",
+            "context_window",
+            "proprio_flow",
+            "dh_ablation",
+            "require_cuda_mamba",
+            "delta_p_dim",
+            "refiner_depth",
+            "sparse_top_frac",
+        }
+        predictor_extra_kwargs = (
+            {key: kwargs[key] for key in mgvt_d_kwarg_names if key in kwargs}
+            if pred_type in mgvt_d_pred_types
+            else {}
+        )
         predictor = mgvt_factories[pred_type](
             img_size=img_size,
             patch_size=encoder.patch_size,
@@ -820,6 +865,7 @@ def init_video_model(
             proprio_emb_dim=proprio_emb_dim,
             proprio_tokens=proprio_tokens,
             init_scale_factor_adaln=init_scale_factor_adaln,
+            **predictor_extra_kwargs,
         ).to(device)
     logger.info(f"Predictor: {predictor}")
     pred_params = sum(p.numel() for p in predictor.parameters())
@@ -829,7 +875,18 @@ def init_video_model(
         if action_conditioning == "token":
             action_encoder_output_dim = (
                 predictor.predictor_total_embed_dim
-                if pred_type in {"AdaLN", "mgvt_mlp", "mgvt_convmixer", "mgvt_mamba"}
+                if pred_type
+                in {
+                    "AdaLN",
+                    "mgvt_mlp",
+                    "mgvt_convmixer",
+                    "mgvt_mamba",
+                    "mgvt_d_raw_action",
+                    "mgvt_d_mlp",
+                    "mgvt_d_gru",
+                    "mgvt_d_mamba",
+                    "mgvt_d_sparse_control",
+                }
                 else embed_dim
             )
         elif action_conditioning == "feature":

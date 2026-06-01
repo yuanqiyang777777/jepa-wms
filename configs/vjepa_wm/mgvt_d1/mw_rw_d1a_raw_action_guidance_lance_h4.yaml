@@ -1,0 +1,207 @@
+app: vjepa_wm
+nodes: 1
+tasks_per_node: 6
+cpus_per_task: 16
+folder: ${JEPAWM_LOGS}/mgvt_d/d1_20260602/mw_rw_d1a_raw_action_guidance_lance_h4
+checkpoint_folder: ${JEPAWM_CKPT}/mgvt_d/d1_20260602/mw_rw_d1a_raw_action_guidance_lance_h4
+data:
+  dataset_type: custom
+  datasets:
+  - METAWORLD_HF
+  datasets_weights:
+  seed: 1
+  img_size: 224
+  backend:
+    kind: swm_lance
+    lance_uri: ${JEPAWM_DSET_LANCE}/Metaworld.lance
+    fall_back_to_raw_if_unsupported: false
+  validation:
+    val_datasets: []
+    val_datasets_1:
+    num_frames_val: 6
+    val_dataset_batch_size: 4
+    val_dataset_drop_last: false
+    val_dataset_fpcs:
+    - 8
+    val_dataset_camera_views:
+    - exterior_image_2_left
+    val_viz_rank0_loader: false
+  loader:
+    batch_size: 8
+    num_workers: 16
+    pin_mem: true
+    persistent_workers: true
+  custom:
+    split_ratio: 0.9
+    frameskip: 5
+    action_skip: 1
+    state_skip: 1
+    normalize_action: true
+    traj_subset: true
+    filter_first_episodes:
+    filter_tasks:
+    - mw-reach-wall
+    num_hist: 2
+    num_pred: 4
+    with_reward: false
+    custom_teleop_dset:
+  droid:
+    camera_frame: false
+    camera_views:
+    - 2
+    droid_to_rcasa_action_format: 1
+    rcasa_to_droid_action_format: false
+    fps: 4
+    dataset_fpcs:
+    - 8
+    mpk_manifest_patterns: []
+data_aug:
+  auto_augment: false
+  random_horizontal_flip: false
+  motion_shift: false
+  random_resize_aspect_ratio:
+  - 1.0
+  - 1.0
+  random_resize_scale:
+  - 1.777
+  - 1.777
+  reprob: 0.0
+  normalize:
+  - - 0.485
+    - 0.456
+    - 0.406
+  - - 0.229
+    - 0.224
+    - 0.225
+logging:
+  write_tag: jepa
+  wandb:
+    use_wandb: false
+    debug: false
+    project: vjepa_wm
+    disable_wandb_media: true
+    log_media_locally: true
+loss:
+  cos_loss_weight: 0.0
+  l1_loss_weight: 0.0
+  l2_loss_weight: 1.0
+  smooth_l1_loss_weight: 0.0
+meta:
+  plan_only_eval_mode: false
+  light_eval_only_mode: false
+  quick_debug: false
+  freeze_encoder: true
+  load_checkpoint: true
+  load_opt_scale_epoch: true
+  read_checkpoint:
+  pretrained_path:
+  seed: 1
+  eval_freq: 999999
+  light_eval_freq: 999999
+  save_every_freq: 1
+  dtype: bfloat16
+  data_traj_rollout_eval:
+    do_data_traj_rollout_eval: false
+    data_traj_eval_rollout_steps: 4
+    data_traj_decode_gt: false
+    data_traj_eval_ctxt_window: 2
+  energy_landscape_eval:
+    do_energy_landscape_eval: false
+    energy_landscape_rollout_steps: 4
+    energy_landscape_ctxt_window: 2
+model:
+  grid_size: 16
+  tubelet_size_enc: 1
+  use_activation_checkpointing: false
+  action_conditioning: token
+  proprio_encoding: feature
+  num_frames_pred: 6
+  visual_encoder:
+    enc_type: dino
+    enc_version: dinov2_vits14
+    pretrain_enc_path:
+    pretrain_enc_ckpt_key: target_encoder
+    embed_dim: 384
+    enc_use_rope:
+    enc_name:
+    use_sdpa_enc: true
+    num_frames_enc: 16
+    uniform_power: true
+  action_encoder:
+    action_tokens: 1
+    action_emb_dim: 0
+    act_mlp: false
+    action_encoder_inpred: false
+  proprio_encoder:
+    proprio_tokens: 0
+    proprio_emb_dim: 16
+    prop_mlp: false
+    proprio_encoder_inpred: false
+  predictor:
+    tubelet_size: 1
+    pred_num_heads: 4
+    pred_depth: 1
+    pred_embed_dim: 128
+    pred_use_extrinsics: false
+    pred_type: mgvt_d_raw_action
+    act_pred_projector: false
+    use_SiLU: false
+    use_rope: true
+    use_sdpa: true
+    init_scale_factor_adaln: 0
+    d_h_dim: 16
+    state_dim: 64
+    context_window: 2
+    dh_ablation: none
+    proprio_flow: dyn_refine
+    delta_p_dim:
+    fdyn_type: raw_action
+    d1_block: d1a
+    d1_variant: raw_action_guidance
+    confidence_head: false
+    L_trend_weight: 0.0
+  wm_encoding:
+    batchify_video: true
+    dup_image: false
+    normalize_reps: true
+  rollout_cfg:
+    rollout_steps: 4
+    train_rollout_prefixes: all
+    rollout_stop_gradient: true
+    ctxt_window_train_rollout: 2
+    do_parallel_rollout: false
+    do_sequential_rollout: true
+    prepend_gt: false
+    sampling_scheduler:
+      type: linear
+      start: 0.0
+      end: 0.0
+  attn:
+    local_window_time: 3
+    local_window_h: -1
+    local_window_w: -1
+  heads_cfg:
+    architectures: {}
+    pretrain_dec_path:
+optimization:
+  main_optimizer: transition_model
+  train_heads: false
+  transition_model:
+    iterations_per_epoch: 1000
+    ipe_scale: 1.0
+    clip_grad: 1
+    use_radamw: false
+    betas:
+    - 0.9
+    - 0.999
+    eps: 1.0e-08
+    weight_decay: 1.0e-07
+    final_weight_decay: 1.0e-06
+    num_epochs: 10
+    warmup: 0
+    start_lr: 0.0005
+    ref_lr: 0.0005
+    final_lr: 0.0005
+    mixed_precision: true
+evals:
+unroll_decode_evals:

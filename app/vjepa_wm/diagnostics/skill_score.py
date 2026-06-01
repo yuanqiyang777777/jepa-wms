@@ -149,15 +149,27 @@ def _move_obs_to_device(obs: dict[str, torch.Tensor], device: torch.device) -> d
 
 
 def _count_predictor_params(model) -> int:
-    predictor = model.model.predictor
-    action_encoder = model.model.action_encoder
-    proprio_encoder = model.model.proprio_encoder
+    predictor = getattr(model.model.predictor, "module", model.model.predictor)
+    action_encoder = getattr(model.model.action_encoder, "module", model.model.action_encoder)
+    proprio_encoder = getattr(model.model.proprio_encoder, "module", model.model.proprio_encoder)
     modules = [m for m in (predictor, action_encoder, proprio_encoder) if m is not None]
     return int(sum(p.numel() for module in modules for p in module.parameters()))
 
 
+def _estimate_predictor_flops(model, batch_size: int = 1, seq_len: int | None = None) -> int | None:
+    predictor = getattr(model.model.predictor, "module", model.model.predictor)
+    estimate = getattr(predictor, "estimate_flops_per_forward", None)
+    if estimate is None:
+        return None
+    return int(estimate(batch_size=batch_size, seq_len=seq_len))
+
+
 def _mamba_backend(model) -> str | None:
     predictor = getattr(model.model, "predictor", None)
+    predictor = getattr(predictor, "module", predictor)
+    direct_backend = getattr(predictor, "mamba_backend", None)
+    if direct_backend:
+        return str(direct_backend)
     blocks = getattr(predictor, "predictor_blocks", [])
     backends = []
     for block in blocks:
@@ -236,15 +248,77 @@ def _add_patch_mse(
     counts[horizon] += int(model_patch_mse.numel())
 
 
+def _dilate_square_mask(mask: torch.Tensor, grid_size: int, iterations: int = 1) -> torch.Tensor:
+    if iterations <= 0:
+        return mask
+    if mask.shape[-1] != grid_size * grid_size:
+        return mask
+    import torch.nn.functional as F
+
+    flat_shape = mask.shape
+    mask_2d = mask.reshape(-1, 1, grid_size, grid_size).float()
+    for _ in range(iterations):
+        mask_2d = F.max_pool2d(mask_2d, kernel_size=3, stride=1, padding=1)
+    return mask_2d.reshape(flat_shape).bool()
+
+
+def _make_moved_patch_mask(
+    persist_patch_mse: torch.Tensor,
+    top_frac: float = 0.20,
+    min_floor: float = 0.0,
+    grid_size: int | None = None,
+    dilation: int = 0,
+) -> torch.Tensor:
+    """Model-independent moved-region mask from persistence error.
+
+    ``persist_patch_mse`` is target-side motion relative to the observed prefix;
+    it never reads model predictions.
+    """
+    if not 0.0 < top_frac <= 1.0:
+        raise ValueError(f"top_frac must be in (0, 1], got {top_frac}")
+    k = max(1, int(round(persist_patch_mse.shape[-1] * top_frac)))
+    threshold = persist_patch_mse.topk(k=k, dim=-1).values[..., -1:]
+    mask = persist_patch_mse >= threshold
+    if min_floor > 0.0:
+        mask = mask & (persist_patch_mse >= min_floor)
+    if grid_size is not None:
+        mask = _dilate_square_mask(mask, grid_size=grid_size, iterations=dilation)
+    return mask
+
+
+def _add_masked_patch_mse(
+    model_patch_mse: torch.Tensor,
+    persist_patch_mse: torch.Tensor,
+    mask: torch.Tensor,
+    horizon: int,
+    model_sums: dict[int, float],
+    persist_sums: dict[int, float],
+    counts: dict[int, int],
+    denominator_floor: float = 0.0,
+) -> None:
+    valid = mask & (persist_patch_mse >= denominator_floor)
+    if not valid.any():
+        return
+    _add_patch_mse(
+        model_patch_mse[valid],
+        persist_patch_mse[valid],
+        horizon,
+        model_sums,
+        persist_sums,
+        counts,
+    )
+
+
 def _make_markdown(results: dict[str, Any]) -> str:
     if "skill_by_horizon" in results:
         rows = [
-            "| Horizon | Skill | Change skill | Proprio skill | MSE model | MSE persist |",
-            "| ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| Horizon | Skill | Change skill | Moved change skill | Proprio skill | MSE model | MSE persist |",
+            "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
         for horizon in sorted(results["skill_by_horizon"], key=lambda h: int(h)):
             skill = results["skill_by_horizon"].get(horizon)
             change_skill = results["change_skill_by_horizon"].get(horizon)
+            moved_skill = results.get("moved_region_change_skill_by_horizon", {}).get(horizon)
             proprio_skill = results["proprio_skill_by_horizon"].get(horizon)
             mse_model = results["mse_model_by_horizon"].get(horizon)
             mse_persist = results["mse_persist_by_horizon"].get(horizon)
@@ -253,6 +327,7 @@ def _make_markdown(results: dict[str, Any]) -> str:
                 f"{horizon} | "
                 f"{'n/a' if skill is None else f'{skill:.4f}'} | "
                 f"{'n/a' if change_skill is None else f'{change_skill:.4f}'} | "
+                f"{'n/a' if moved_skill is None else f'{moved_skill:.4f}'} | "
                 f"{'n/a' if proprio_skill is None else f'{proprio_skill:.4f}'} | "
                 f"{'n/a' if mse_model is None else f'{mse_model:.6g}'} | "
                 f"{'n/a' if mse_persist is None else f'{mse_persist:.6g}'} |"
@@ -325,10 +400,13 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
     mse_persist_sums = {h: 0.0 for h in horizons}
     mse_model_top_sums = {h: 0.0 for h in horizons}
     mse_persist_top_sums = {h: 0.0 for h in horizons}
+    moved_model_sums = {h: 0.0 for h in horizons}
+    moved_persist_sums = {h: 0.0 for h in horizons}
     proprio_model_sums = {h: 0.0 for h in horizons}
     proprio_persist_sums = {h: 0.0 for h in horizons}
     counts = {h: 0 for h in horizons}
     top_counts = {h: 0 for h in horizons}
+    moved_counts = {h: 0 for h in horizons}
     proprio_counts = {h: 0 for h in horizons}
     latent_means = []
     latent_stds = []
@@ -340,6 +418,10 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
     top_k = args.top_k_patches
     if top_k <= 0:
         raise ValueError("--top-k-patches must be positive")
+    moved_top_frac = float(args.moved_top_frac)
+    moved_min_floor = float(args.moved_min_floor)
+    moved_denominator_floor = float(args.moved_denominator_floor)
+    moved_dilation = int(args.moved_dilation)
     for batch_idx, batch in enumerate(val_loader):
         if max_batches is not None and batch_idx >= max_batches:
             break
@@ -427,6 +509,23 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
                 mse_persist_top_sums,
                 top_counts,
             )
+            moved_mask = _make_moved_patch_mask(
+                persist_patch_mse,
+                top_frac=moved_top_frac,
+                min_floor=moved_min_floor,
+                grid_size=model.model.grid_size,
+                dilation=moved_dilation,
+            )
+            _add_masked_patch_mse(
+                model_patch_mse,
+                persist_patch_mse,
+                moved_mask,
+                horizon,
+                moved_model_sums,
+                moved_persist_sums,
+                moved_counts,
+                denominator_floor=moved_denominator_floor,
+            )
 
             if persistent_proprio is not None and horizon in pred_prop_by_horizon:
                 prop_target = proprio_features[:, prefix + horizon : prefix + horizon + 1]
@@ -456,6 +555,7 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
 
     visual_metrics = _finalize_horizon_metrics(mse_model_sums, mse_persist_sums, counts, "visual")
     change_metrics = _finalize_horizon_metrics(mse_model_top_sums, mse_persist_top_sums, top_counts, "change")
+    moved_metrics = _finalize_horizon_metrics(moved_model_sums, moved_persist_sums, moved_counts, "moved_region")
     proprio_metrics = _finalize_horizon_metrics(proprio_model_sums, proprio_persist_sums, proprio_counts, "proprio")
     h1 = "1"
 
@@ -472,12 +572,22 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
         "max_horizon": max_horizon,
         "prefix": prefix,
         "top_k_patches": top_k,
+        "moved_region_mask": {
+            "source": "target_side_persistence_patch_mse",
+            "top_frac": moved_top_frac,
+            "min_floor": moved_min_floor,
+            "denominator_floor": moved_denominator_floor,
+            "dilation": moved_dilation,
+        },
         "mse_model": visual_metrics["visual_mse_model"].get(h1),
         "mse_persist": visual_metrics["visual_mse_persist"].get(h1),
         "skill": visual_metrics["visual_skill"].get(h1),
         "change_mse_model": change_metrics["change_mse_model"].get(h1),
         "change_mse_persist": change_metrics["change_mse_persist"].get(h1),
         "change_skill": change_metrics["change_skill"].get(h1),
+        "moved_region_mse_model": moved_metrics["moved_region_mse_model"].get(h1),
+        "moved_region_mse_persist": moved_metrics["moved_region_mse_persist"].get(h1),
+        "moved_region_change_skill": moved_metrics["moved_region_skill"].get(h1),
         "proprio_mse_model": proprio_metrics["proprio_mse_model"].get(h1),
         "proprio_mse_persist": proprio_metrics["proprio_mse_persist"].get(h1),
         "proprio_skill": proprio_metrics["proprio_skill"].get(h1),
@@ -487,10 +597,19 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
         "change_mse_model_by_horizon": change_metrics["change_mse_model"],
         "change_mse_persist_by_horizon": change_metrics["change_mse_persist"],
         "change_skill_by_horizon": change_metrics["change_skill"],
+        "moved_region_mse_model_by_horizon": moved_metrics["moved_region_mse_model"],
+        "moved_region_mse_persist_by_horizon": moved_metrics["moved_region_mse_persist"],
+        "moved_region_change_skill_by_horizon": moved_metrics["moved_region_skill"],
+        "moved_region_counts_by_horizon": {str(k): int(v) for k, v in moved_counts.items()},
         "proprio_mse_model_by_horizon": proprio_metrics["proprio_mse_model"],
         "proprio_mse_persist_by_horizon": proprio_metrics["proprio_mse_persist"],
         "proprio_skill_by_horizon": proprio_metrics["proprio_skill"],
         "param_count": _count_predictor_params(model),
+        "flops_per_forward_estimate": _estimate_predictor_flops(
+            model,
+            batch_size=args.batch_size or 1,
+            seq_len=min_eval_frames,
+        ),
         "mamba_backend": _mamba_backend(model),
         "train_step_time_ms": _read_train_step_time_ms(train_log_csv),
         "diagnostic_batch_time_ms": float(sum(batch_times) / len(batch_times)),
@@ -512,6 +631,10 @@ def main() -> None:
     parser.add_argument("--max-horizon", type=int, default=6)
     parser.add_argument("--prefix", type=int, default=None, help="Observed prefix index; defaults to ctxt_window - 1.")
     parser.add_argument("--top-k-patches", type=int, default=32)
+    parser.add_argument("--moved-top-frac", type=float, default=0.20)
+    parser.add_argument("--moved-min-floor", type=float, default=0.0)
+    parser.add_argument("--moved-denominator-floor", type=float, default=0.0)
+    parser.add_argument("--moved-dilation", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--train-log-csv", default=None, help="Optional log_r0.csv for train step-time metadata.")

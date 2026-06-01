@@ -351,7 +351,17 @@ class VideoWM(nn.Module):
             pred_video_features = rearrange(
                 pred_video_features, "b (t v h w) d -> b t v h w d", h=self.grid_size, w=self.grid_size, v=1
             )
-        elif self.pred_type in {"AdaLN", "mgvt_mlp", "mgvt_convmixer", "mgvt_mamba"}:
+        elif self.pred_type in {
+            "AdaLN",
+            "mgvt_mlp",
+            "mgvt_convmixer",
+            "mgvt_mamba",
+            "mgvt_d_raw_action",
+            "mgvt_d_mlp",
+            "mgvt_d_gru",
+            "mgvt_d_mamba",
+            "mgvt_d_sparse_control",
+        }:
             pred_video_features, pred_action_features, pred_proprio_features = self.predictor(
                 video_features,
                 action_features,
@@ -363,7 +373,9 @@ class VideoWM(nn.Module):
         else:
             raise ValueError(
                 "self.pred_type should be in ['dino_wm', 'vjepa2_ac', 'AdaLN', "
-                "'mgvt_mlp', 'mgvt_convmixer', 'mgvt_mamba']"
+                "'mgvt_mlp', 'mgvt_convmixer', 'mgvt_mamba', "
+                "'mgvt_d_raw_action', 'mgvt_d_mlp', 'mgvt_d_gru', "
+                "'mgvt_d_mamba', 'mgvt_d_sparse_control']"
             )
         if self.normalize_reps:
             pred_video_features = F.layer_norm(pred_video_features, (pred_video_features.size(-1),))

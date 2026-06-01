@@ -904,6 +904,10 @@ def main(args, resume_preempt=False):
                         else:
                             pred_video_features, pred_proprio_features = None, None
                             predictor_losses = {}
+                    predictor_module = getattr(world_model.predictor, "module", world_model.predictor)
+                    for key, value in getattr(predictor_module, "last_aux_stats", {}).items():
+                        if isinstance(value, (int, float)):
+                            total_stats[key] = value
                     predictor_loss = predictor_losses.get("loss", 0.0) / (rollout_steps + 1)
                     if train and train_predictor and predictor is not None:
                         total_transition_loss += predictor_loss
