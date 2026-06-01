@@ -82,8 +82,17 @@ def test_d1_predictor_backpropagates_through_trend_path():
     assert actions.grad is not None
 
 
-def test_d1_default_training_loss_touches_all_trainable_params():
-    predictor = vit_predictor_mgvt_d_mlp(**PREDICTOR_KWARGS)
+@pytest.mark.parametrize(
+    "factory",
+    [
+        vit_predictor_mgvt_d_raw_action,
+        vit_predictor_mgvt_d_mlp,
+        vit_predictor_mgvt_d_gru,
+        vit_predictor_mgvt_d_mamba,
+    ],
+)
+def test_d1_default_training_loss_touches_all_trainable_params(factory):
+    predictor = factory(**PREDICTOR_KWARGS)
     x = torch.randn(2, 3, 1, 16, 16, 384)
     actions = torch.randn(2, 3, 1, predictor.predictor_total_embed_dim)
     proprio = torch.randn(2, 3, 16 * 16, 16)
@@ -94,6 +103,15 @@ def test_d1_default_training_loss_touches_all_trainable_params():
 
     missing = [name for name, param in predictor.named_parameters() if param.requires_grad and param.grad is None]
     assert missing == []
+
+
+def test_raw_action_guidance_does_not_create_unused_compact_state_modules():
+    predictor = vit_predictor_mgvt_d_raw_action(**PREDICTOR_KWARGS)
+
+    assert predictor.uses_compact_state is False
+    assert predictor.visual_state is None
+    assert predictor.proprio_state is None
+    assert predictor.state_fuse is None
 
 
 def test_d1_delta_p_head_is_explicit_not_default():

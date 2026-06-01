@@ -156,6 +156,7 @@ class DynamicsGuidedPredictor(nn.Module):
         self.context_window = int(context_window)
         self.sparse_top_frac = float(sparse_top_frac)
         self.delta_p_dim = int(delta_p_dim or 0)
+        self.uses_compact_state = fdyn_type != "raw_action"
         self.init_std = init_std
         self.init_scale_factor_adaln = init_scale_factor_adaln
         self.last_aux_stats: dict[str, float | str] = {}
@@ -174,22 +175,27 @@ class DynamicsGuidedPredictor(nn.Module):
         refiner_depth = max(0, refiner_depth)
 
         self.predictor_embed = nn.Linear(self.context_window * embed_dim, predictor_embed_dim)
-        self.visual_state = nn.Sequential(
-            nn.LayerNorm(2 * embed_dim),
-            nn.Linear(2 * embed_dim, state_dim),
-            act_layer(),
-            nn.Linear(state_dim, state_dim),
-        )
-        dyn_reads_proprio = use_proprio and proprio_flow in {"dyn_only", "dyn_refine", "old_concat"}
-        prop_state_dim = proprio_emb_dim if (dyn_reads_proprio and proprio_emb_dim > 0) else 0
-        self.proprio_state = (
-            nn.Sequential(nn.LayerNorm(prop_state_dim), nn.Linear(prop_state_dim, state_dim), act_layer())
-            if prop_state_dim > 0
-            else None
-        )
-        dyn_reads_proprio = self.proprio_state is not None
-        state_in_dim = state_dim + (state_dim if dyn_reads_proprio else 0)
-        self.state_fuse = nn.Sequential(nn.LayerNorm(state_in_dim), nn.Linear(state_in_dim, state_dim), act_layer())
+        if self.uses_compact_state:
+            self.visual_state = nn.Sequential(
+                nn.LayerNorm(2 * embed_dim),
+                nn.Linear(2 * embed_dim, state_dim),
+                act_layer(),
+                nn.Linear(state_dim, state_dim),
+            )
+            dyn_reads_proprio = use_proprio and proprio_flow in {"dyn_only", "dyn_refine", "old_concat"}
+            prop_state_dim = proprio_emb_dim if (dyn_reads_proprio and proprio_emb_dim > 0) else 0
+            self.proprio_state = (
+                nn.Sequential(nn.LayerNorm(prop_state_dim), nn.Linear(prop_state_dim, state_dim), act_layer())
+                if prop_state_dim > 0
+                else None
+            )
+            dyn_reads_proprio = self.proprio_state is not None
+            state_in_dim = state_dim + (state_dim if dyn_reads_proprio else 0)
+            self.state_fuse = nn.Sequential(nn.LayerNorm(state_in_dim), nn.Linear(state_in_dim, state_dim), act_layer())
+        else:
+            self.visual_state = None
+            self.proprio_state = None
+            self.state_fuse = None
 
         self.action_norm = nn.LayerNorm(self.predictor_total_embed_dim)
         dyn_input_dim = state_dim + self.predictor_total_embed_dim
@@ -305,6 +311,8 @@ class DynamicsGuidedPredictor(nn.Module):
         raise ValueError(f"Unexpected proprio shape: {tuple(proprio.shape)}")
 
     def _compact_state(self, x: torch.Tensor, proprio: torch.Tensor | None) -> torch.Tensor:
+        if self.visual_state is None or self.state_fuse is None:
+            raise RuntimeError("compact dynamics state requested for an action-only F_dyn")
         pooled = x.mean(dim=(2, 3, 4))
         if x.shape[1] > 1:
             prev = torch.cat([pooled[:, :1], pooled[:, :-1]], dim=1)
@@ -373,8 +381,8 @@ class DynamicsGuidedPredictor(nn.Module):
         token_base = self.predictor_embed(x_context).flatten(2, 4)
         B, T, N, D = token_base.shape
 
-        state = self._compact_state(x, proprio)
         action = self._action_summary(actions)
+        state = self._compact_state(x, proprio) if self.uses_compact_state else None
         d_h = self._fdyn(state, action)
 
         guidance = self.guidance(d_h).unsqueeze(2)
@@ -419,8 +427,10 @@ class DynamicsGuidedPredictor(nn.Module):
         step_tokens = batch_size * seq_len
         flops = 0
         flops += _count_linear_flops(self.predictor_embed, tokens)
-        flops += _count_linear_flops(self.visual_state, step_tokens)
-        flops += _count_linear_flops(self.state_fuse, step_tokens)
+        if self.visual_state is not None:
+            flops += _count_linear_flops(self.visual_state, step_tokens)
+        if self.state_fuse is not None:
+            flops += _count_linear_flops(self.state_fuse, step_tokens)
         flops += _count_linear_flops(self.f_dyn, step_tokens)
         flops += _count_linear_flops(self.guidance, step_tokens)
         flops += _count_linear_flops(self.guidance_gate, step_tokens)
