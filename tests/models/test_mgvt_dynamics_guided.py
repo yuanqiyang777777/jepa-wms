@@ -82,6 +82,46 @@ def test_d1_predictor_backpropagates_through_trend_path():
     assert actions.grad is not None
 
 
+def test_d1_default_training_loss_touches_all_trainable_params():
+    predictor = vit_predictor_mgvt_d_mlp(**PREDICTOR_KWARGS)
+    x = torch.randn(2, 3, 1, 16, 16, 384)
+    actions = torch.randn(2, 3, 1, predictor.predictor_total_embed_dim)
+    proprio = torch.randn(2, 3, 16 * 16, 16)
+
+    pred, _action_features, pred_proprio = predictor(x, actions, proprio)
+    loss = pred.square().mean() + pred_proprio.square().mean()
+    loss.backward()
+
+    missing = [name for name, param in predictor.named_parameters() if param.requires_grad and param.grad is None]
+    assert missing == []
+
+
+def test_d1_delta_p_head_is_explicit_not_default():
+    predictor = vit_predictor_mgvt_d_mlp(**PREDICTOR_KWARGS)
+    assert predictor.delta_p_head is None
+
+    with_delta = vit_predictor_mgvt_d_mlp(**{**PREDICTOR_KWARGS, "delta_p_dim": 7})
+    assert with_delta.delta_p_head is not None
+
+
+@pytest.mark.parametrize("dh_ablation", ["remove", "random"])
+def test_dh_ablation_keeps_fdyn_graph_for_ddp(dh_ablation):
+    predictor = vit_predictor_mgvt_d_mlp(**{**PREDICTOR_KWARGS, "dh_ablation": dh_ablation})
+    x = torch.randn(2, 3, 1, 16, 16, 384)
+    actions = torch.randn(2, 3, 1, predictor.predictor_total_embed_dim)
+    proprio = torch.randn(2, 3, 16 * 16, 16)
+
+    pred = predictor(x, actions, proprio)[0]
+    pred.square().mean().backward()
+
+    missing = [
+        name
+        for name, param in predictor.named_parameters()
+        if name.startswith("f_dyn") and param.requires_grad and param.grad is None
+    ]
+    assert missing == []
+
+
 def test_remove_dh_ablation_changes_prediction():
     base = vit_predictor_mgvt_d_mlp(**PREDICTOR_KWARGS)
     remove = vit_predictor_mgvt_d_mlp(**{**PREDICTOR_KWARGS, "dh_ablation": "remove"})

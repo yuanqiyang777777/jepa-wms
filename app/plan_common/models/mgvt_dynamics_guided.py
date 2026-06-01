@@ -155,7 +155,7 @@ class DynamicsGuidedPredictor(nn.Module):
         self.dh_ablation = dh_ablation
         self.context_window = int(context_window)
         self.sparse_top_frac = float(sparse_top_frac)
-        self.delta_p_dim = int(delta_p_dim) if delta_p_dim is not None else int(proprio_dim or 0)
+        self.delta_p_dim = int(delta_p_dim or 0)
         self.init_std = init_std
         self.init_scale_factor_adaln = init_scale_factor_adaln
         self.last_aux_stats: dict[str, float | str] = {}
@@ -180,13 +180,14 @@ class DynamicsGuidedPredictor(nn.Module):
             act_layer(),
             nn.Linear(state_dim, state_dim),
         )
-        prop_state_dim = proprio_emb_dim if (use_proprio and proprio_emb_dim > 0) else 0
+        dyn_reads_proprio = use_proprio and proprio_flow in {"dyn_only", "dyn_refine", "old_concat"}
+        prop_state_dim = proprio_emb_dim if (dyn_reads_proprio and proprio_emb_dim > 0) else 0
         self.proprio_state = (
             nn.Sequential(nn.LayerNorm(prop_state_dim), nn.Linear(prop_state_dim, state_dim), act_layer())
             if prop_state_dim > 0
             else None
         )
-        dyn_reads_proprio = self.proprio_state is not None and proprio_flow in {"dyn_only", "dyn_refine", "old_concat"}
+        dyn_reads_proprio = self.proprio_state is not None
         state_in_dim = state_dim + (state_dim if dyn_reads_proprio else 0)
         self.state_fuse = nn.Sequential(nn.LayerNorm(state_in_dim), nn.Linear(state_in_dim, state_dim), act_layer())
 
@@ -343,11 +344,11 @@ class DynamicsGuidedPredictor(nn.Module):
             d_h = self.f_dyn(dyn_out)
 
         if self.dh_ablation == "remove":
-            d_h = torch.zeros_like(d_h)
+            d_h = d_h * 0.0
         elif self.dh_ablation == "shuffle":
             d_h = d_h.roll(shifts=1, dims=0) if d_h.shape[0] > 1 else d_h.flip(dims=[1])
         elif self.dh_ablation == "random":
-            d_h = torch.randn_like(d_h) * d_h.detach().std().clamp_min(1.0e-6)
+            d_h = torch.randn_like(d_h) * d_h.detach().std().clamp_min(1.0e-6) + d_h * 0.0
         return d_h
 
     def _apply_sparse_control(self, refined: torch.Tensor, base: torch.Tensor, d_h: torch.Tensor) -> torch.Tensor:
