@@ -26,6 +26,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import torch
+import torch.nn as nn
 
 
 def _as_path(value: str | None) -> Path | None:
@@ -156,12 +157,57 @@ def _count_predictor_params(model) -> int:
     return int(sum(p.numel() for module in modules for p in module.parameters()))
 
 
+def _count_linear_flops(module: nn.Module, token_count: int, excluded: set[int] | None = None) -> int:
+    excluded = excluded or set()
+    flops = 0
+    for layer in module.modules():
+        if isinstance(layer, nn.Linear) and id(layer) not in excluded:
+            flops += int(2 * token_count * layer.in_features * layer.out_features)
+    return flops
+
+
+def _estimate_adaln_flops(predictor: nn.Module, batch_size: int, seq_len: int | None) -> int | None:
+    blocks = getattr(predictor, "predictor_blocks", None)
+    if blocks is None or not all(hasattr(block, "adaLN_modulation") for block in blocks):
+        return None
+    grid_height = getattr(predictor, "grid_height", None)
+    grid_width = getattr(predictor, "grid_width", None)
+    if grid_height is None or grid_width is None:
+        return None
+
+    seq_len = int(seq_len or max(1, getattr(predictor, "grid_depth", 1)))
+    tokens = int(batch_size * seq_len * grid_height * grid_width)
+    step_tokens = int(batch_size * seq_len)
+    adaln_linear_ids = {
+        id(layer)
+        for block in blocks
+        for layer in block.adaLN_modulation.modules()
+        if isinstance(layer, nn.Linear)
+    }
+
+    flops = _count_linear_flops(predictor, tokens, excluded=adaln_linear_ids)
+    for block in blocks:
+        flops += _count_linear_flops(block.adaLN_modulation, step_tokens)
+    return int(flops)
+
+
 def _estimate_predictor_flops(model, batch_size: int = 1, seq_len: int | None = None) -> int | None:
     predictor = getattr(model.model.predictor, "module", model.model.predictor)
+    action_encoder = getattr(model.model.action_encoder, "module", model.model.action_encoder)
+    proprio_encoder = getattr(model.model.proprio_encoder, "module", model.model.proprio_encoder)
     estimate = getattr(predictor, "estimate_flops_per_forward", None)
-    if estimate is None:
-        return None
-    return int(estimate(batch_size=batch_size, seq_len=seq_len))
+    if estimate is not None:
+        flops = int(estimate(batch_size=batch_size, seq_len=seq_len))
+    else:
+        flops = _estimate_adaln_flops(predictor, batch_size=batch_size, seq_len=seq_len)
+        if flops is None:
+            return None
+
+    step_tokens = int(batch_size * int(seq_len or 1))
+    for encoder in (action_encoder, proprio_encoder):
+        if encoder is not None:
+            flops += _count_linear_flops(encoder, step_tokens)
+    return int(flops)
 
 
 def _mamba_backend(model) -> str | None:

@@ -79,7 +79,7 @@ def d1_variants() -> tuple[Variant, ...]:
             "mgvt_d_mamba",
             {**common, "fdyn_type": "mamba", "require_cuda_mamba": True},
         ),
-        Variant("d1a", "adaln_param_match", "AdaLN", {"pred_embed_dim": 128, "pred_depth": 2}),
+        Variant("d1a", "adaln_param_match", "AdaLN", {"pred_embed_dim": 80, "pred_depth": 3}),
         # D1-B, defaulting to the Mamba trend candidate until D1-A selects a winner.
         Variant("d1b", "mamba_trend_dim4", "mgvt_d_mamba", {**common, "fdyn_type": "mamba", "d_h_dim": 4, "require_cuda_mamba": True}),
         Variant("d1b", "mamba_trend_dim8", "mgvt_d_mamba", {**common, "fdyn_type": "mamba", "d_h_dim": 8, "require_cuda_mamba": True}),
@@ -182,4 +182,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -27,6 +27,16 @@ def test_stage_d1_configs_keep_prediction_only_h4_contract():
             assert "mgvt_d/d1_20260602" in cfg["checkpoint_folder"]
 
 
+def test_stage_d1_adaln_param_match_shape_is_frozen():
+    variant = next(v for v in d1_variants() if v.block == "d1a" and v.name == "adaln_param_match")
+    cfg = build_config("wall", variant)
+    predictor = cfg["model"]["predictor"]
+
+    assert predictor["pred_type"] == "AdaLN"
+    assert predictor["pred_embed_dim"] == 80
+    assert predictor["pred_depth"] == 3
+
+
 def test_stage_d1_configs_do_not_include_forbidden_protocol_terms(tmp_path):
     paths = generate(dry_run=False)
     forbidden = ("cem", "planning", "stage-3", "stage3", "num_pred: 8", "rollout_steps: 8")
@@ -46,4 +56,3 @@ def test_generated_yaml_loads_and_contains_mamba_cuda_contract():
         assert predictor["pred_type"] == "mgvt_d_mamba"
         assert predictor["require_cuda_mamba"] is True
         assert predictor["d_h_dim"] == 16
-

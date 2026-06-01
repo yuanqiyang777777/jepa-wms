@@ -138,8 +138,8 @@ model:
   predictor:
     tubelet_size: 1
     pred_num_heads: 4
-    pred_depth: 2
-    pred_embed_dim: 128
+    pred_depth: 3
+    pred_embed_dim: 80
     pred_use_extrinsics: false
     pred_type: AdaLN
     act_pred_projector: false

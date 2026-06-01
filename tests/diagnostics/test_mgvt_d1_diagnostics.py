@@ -1,9 +1,12 @@
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
+import torch.nn as nn
 
+from app.plan_common.models.AdaLN_vit import vit_predictor_AdaLN
 from app.vjepa_wm.diagnostics.mgvt_d1_probes import (
     cross_position_margin,
     nearest_centroid_accuracy,
@@ -12,6 +15,7 @@ from app.vjepa_wm.diagnostics.mgvt_d1_probes import (
 )
 from app.vjepa_wm.diagnostics.skill_score import (
     _add_masked_patch_mse,
+    _estimate_predictor_flops,
     _finalize_horizon_metrics,
     _make_moved_patch_mask,
 )
@@ -101,3 +105,37 @@ def test_d1_summary_reads_backward_compatible_skill_json(tmp_path):
     assert rows[0]["moved_region_change_skill"] == 0.7
     assert summary[0]["moved_region_change_skill_mean"] == pytest.approx(0.7)
 
+
+def test_adaln_flops_fallback_includes_external_encoders():
+    predictor = vit_predictor_AdaLN(
+        img_size=(28, 28),
+        patch_size=14,
+        num_frames=4,
+        tubelet_size=1,
+        embed_dim=32,
+        predictor_embed_dim=16,
+        depth=1,
+        num_heads=4,
+        action_dim=3,
+        proprio_dim=2,
+        use_proprio=True,
+        proprio_encoding="feature",
+        proprio_emb_dim=4,
+        proprio_tokens=0,
+        proprio_encoder_inpred=False,
+        action_encoder_inpred=False,
+        init_scale_factor_adaln=0,
+        use_rope=False,
+    )
+    wrapped = SimpleNamespace(
+        model=SimpleNamespace(
+            predictor=predictor,
+            action_encoder=nn.Linear(3, 20),
+            proprio_encoder=nn.Linear(2, 4),
+        )
+    )
+
+    flops = _estimate_predictor_flops(wrapped, batch_size=2, seq_len=4)
+
+    assert isinstance(flops, int)
+    assert flops > 0
