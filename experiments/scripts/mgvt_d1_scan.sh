@@ -204,15 +204,17 @@ run_one() {
   task="$(task_from_stem "$stem")"
   block="$(python - "$base_config" <<'PY'
 import sys
-from src.utils.yaml_utils import load_yaml
-cfg = load_yaml(sys.argv[1])
+from ruamel.yaml import YAML
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    cfg = YAML(typ="safe").load(handle)
 print(cfg["model"]["predictor"].get("d1_block", ""))
 PY
 )"
   variant="$(python - "$base_config" <<'PY'
 import sys
-from src.utils.yaml_utils import load_yaml
-cfg = load_yaml(sys.argv[1])
+from ruamel.yaml import YAML
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    cfg = YAML(typ="safe").load(handle)
 print(cfg["model"]["predictor"].get("d1_variant", ""))
 PY
 )"
