@@ -1,0 +1,10 @@
+MGVT-D Stage-D1 baseline re-diagnostics started 2026-06-01T23:06:57+08:00
+run_root=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_baseline_rediag_20260602
+src_log=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531
+src_ckpt=/home/ps/Code/yqy/DINO-WM/jepawm_checkpoints/mgvt_stage2c_3seed_20260531
+devices=cuda:0 cuda:1 cuda:2 cuda:3 cuda:4
+max_horizon=6
+moved_top_frac=0.20
+moved_min_floor=0.0
+moved_denominator_floor=0.0
+moved_dilation=1

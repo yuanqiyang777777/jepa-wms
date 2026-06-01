@@ -1,0 +1,10 @@
+{
+  "change_skill_h4": -0.019002476081152242,
+  "model": "mgvt_d_gru",
+  "moved_region_h4": -1.4090882647998049,
+  "probe_status": "skill-json-only",
+  "seed": 234,
+  "skill_h4": -3.3399613773233323,
+  "source": "/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_smoke_20260602_gru_trend_dim16/skill_scores/20260602_mgvt_d1a_wall_gru_trend_dim16_seed234/skill_score.json",
+  "task": "Wall"
+}

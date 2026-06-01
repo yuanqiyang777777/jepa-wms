@@ -1,0 +1,10 @@
+{
+  "change_skill_h4": -0.0061347532288931195,
+  "model": "mgvt_d_raw_action",
+  "moved_region_h4": -1.2864177972498947,
+  "probe_status": "skill-json-only",
+  "seed": 234,
+  "skill_h4": -3.0478701122608767,
+  "source": "/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_smoke_20260602_raw_action_guidance_retry1/skill_scores/20260602_mgvt_d1a_wall_raw_action_guidance_seed234/skill_score.json",
+  "task": "Wall"
+}

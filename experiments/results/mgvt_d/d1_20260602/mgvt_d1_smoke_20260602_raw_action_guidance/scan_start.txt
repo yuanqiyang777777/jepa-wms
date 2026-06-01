@@ -1,0 +1,11 @@
+MGVT-D Stage-D1 scan starting 2026-06-01T23:51:37+08:00
+commit=6072b00c004e879821b022b966ecfebed402cb2c
+describe=6072b00
+devices=cuda:0 cuda:1
+run_root=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_smoke_20260602_raw_action_guidance
+ckpt_root=/home/ps/Code/yqy/DINO-WM/jepawm_checkpoints/mgvt_d1_smoke_20260602_raw_action_guidance
+task_filter=wall
+variant_filter=raw_action_guidance
+block_filter=d1a
+quick_debug=1
+skill_max_horizon=6

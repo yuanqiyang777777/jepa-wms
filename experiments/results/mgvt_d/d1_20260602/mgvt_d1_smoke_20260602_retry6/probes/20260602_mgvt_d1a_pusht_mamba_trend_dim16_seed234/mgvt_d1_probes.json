@@ -1,0 +1,10 @@
+{
+  "change_skill_h4": -0.11075972212507446,
+  "model": "mgvt_d_mamba",
+  "moved_region_h4": -0.8398494594953987,
+  "probe_status": "skill-json-only",
+  "seed": 234,
+  "skill_h4": -2.197798357312639,
+  "source": "/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_smoke_20260602_retry6/skill_scores/20260602_mgvt_d1a_pusht_mamba_trend_dim16_seed234/skill_score.json",
+  "task": "PushT"
+}

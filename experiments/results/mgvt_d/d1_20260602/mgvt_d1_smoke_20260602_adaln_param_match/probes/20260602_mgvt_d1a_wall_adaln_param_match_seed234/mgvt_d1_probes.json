@@ -1,0 +1,10 @@
+{
+  "change_skill_h4": -0.04303348159686782,
+  "model": "AdaLN",
+  "moved_region_h4": -1.5753445928413314,
+  "probe_status": "skill-json-only",
+  "seed": 234,
+  "skill_h4": -3.7786933404886485,
+  "source": "/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_smoke_20260602_adaln_param_match/skill_scores/20260602_mgvt_d1a_wall_adaln_param_match_seed234/skill_score.json",
+  "task": "Wall"
+}

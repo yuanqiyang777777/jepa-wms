@@ -1,0 +1,6 @@
+
+=== RUN 20260602_mgvt_d1a_wall_mamba_trend_dim16_seed234 2026-06-01T22:19:44+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_smoke_20260602_retry6/20260602_mgvt_d1a_wall_mamba_trend_dim16_seed234/config.yaml
+
+=== RUN 20260602_mgvt_d1a_pusht_mamba_trend_dim16_seed234 2026-06-01T22:20:53+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_smoke_20260602_retry6/20260602_mgvt_d1a_pusht_mamba_trend_dim16_seed234/config.yaml

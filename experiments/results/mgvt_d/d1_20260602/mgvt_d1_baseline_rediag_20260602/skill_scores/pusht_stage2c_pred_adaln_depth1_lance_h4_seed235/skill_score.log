@@ -1,0 +1,228 @@
+=== REDIAG pusht_stage2c_pred_adaln_depth1_lance_h4_seed235 2026-06-01T23:30:09+08:00 device=cuda:0 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/pusht_stage2c_pred_adaln_depth1_lance_h4_seed235/config.yaml
+checkpoint=/home/ps/Code/yqy/DINO-WM/jepawm_checkpoints/mgvt_stage2c_3seed_20260531/pusht_stage2c_pred_adaln_depth1_lance_h4_seed235/jepa-latest.pth.tar
+INFO:Datasets utils:Datapaths ['/home/ps/Code/yqy/DINO-WM/jepawm_data/pusht_noise']
+INFO:root:📂 Data paths: ['/home/ps/Code/yqy/DINO-WM/jepawm_data/pusht_noise']
+INFO:app.plan_common.datasets.stores.lance_window:Opened Lance PointMaze dataset (18685 episodes) at /home/ps/Code/yqy/DINO-WM/jepawm_data/_lance_20260528/PushT.lance/train.lance
+INFO:app.plan_common.datasets.stores.lance_window:Opened Lance PointMaze dataset (21 episodes) at /home/ps/Code/yqy/DINO-WM/jepawm_data/_lance_20260528/PushT.lance/val.lance
+INFO:root:VideoDataset unsupervised data loader created
+INFO:dinov2:using MLP layer as FFN
+INFO:root:Encoder: DinoEncoder(
+  (base_model): DinoVisionTransformer(
+    (patch_embed): PatchEmbed(
+      (proj): Conv2d(3, 384, kernel_size=(14, 14), stride=(14, 14))
+      (norm): Identity()
+    )
+    (blocks): ModuleList(
+      (0-11): 12 x NestedTensorBlock(
+        (norm1): LayerNorm((384,), eps=1e-06, elementwise_affine=True)
+        (attn): MemEffAttention(
+          (qkv): Linear(in_features=384, out_features=1152, bias=True)
+          (attn_drop): Dropout(p=0.0, inplace=False)
+          (proj): Linear(in_features=384, out_features=384, bias=True)
+          (proj_drop): Dropout(p=0.0, inplace=False)
+        )
+        (ls1): LayerScale()
+        (drop_path1): Identity()
+        (norm2): LayerNorm((384,), eps=1e-06, elementwise_affine=True)
+        (mlp): Mlp(
+          (fc1): Linear(in_features=384, out_features=1536, bias=True)
+          (act): GELU(approximate='none')
+          (fc2): Linear(in_features=1536, out_features=384, bias=True)
+          (drop): Dropout(p=0.0, inplace=False)
+        )
+        (ls2): LayerScale()
+        (drop_path2): Identity()
+      )
+    )
+    (norm): LayerNorm((384,), eps=1e-06, elementwise_affine=True)
+    (head): Identity()
+  )
+)
+INFO:root:🧠 Encoder: DinoEncoder (22,056,576 params, frozen=True)
+INFO:app.plan_common.models.AdaLN_vit:🔧 Initialized 1 AdaLN-zero blocks
+INFO:root:Predictor: VisionTransformerAdaLN(
+  (predictor_embed): Linear(in_features=384, out_features=104, bias=True)
+  (predictor_blocks): ModuleList(
+    (0): FWAdaLNBlock(
+      (norm1): LayerNorm((120,), eps=1e-06, elementwise_affine=True)
+      (attn): RoPEAttention(
+        (qkv): Linear(in_features=120, out_features=360, bias=True)
+        (attn_drop): Dropout(p=0.0, inplace=False)
+        (proj): Linear(in_features=120, out_features=120, bias=True)
+        (proj_drop): Dropout(p=0.0, inplace=False)
+      )
+      (drop_path): Identity()
+      (norm2): LayerNorm((120,), eps=1e-06, elementwise_affine=True)
+      (mlp): MLP(
+        (fc1): Linear(in_features=120, out_features=480, bias=True)
+        (act): GELU(approximate='none')
+        (fc2): Linear(in_features=480, out_features=120, bias=True)
+        (drop): Dropout(p=0.0, inplace=False)
+      )
+      (adaLN_modulation): Sequential(
+        (0): SiLU()
+        (1): Linear(in_features=120, out_features=720, bias=True)
+      )
+    )
+  )
+  (predictor_norm): LayerNorm((120,), eps=1e-06, elementwise_affine=True)
+  (predictor_proj): Linear(in_features=104, out_features=384, bias=True)
+)
+INFO:root:🔮 Predictor: VisionTransformerAdaLN (342,080 params)
+INFO:root:Action encoder output dim: 120
+INFO:root:Loading checkpoint from local path: /home/ps/Code/yqy/DINO-WM/jepawm_checkpoints/mgvt_stage2c_3seed_20260531/pusht_stage2c_pred_adaln_depth1_lance_h4_seed235/jepa-latest.pth.tar
+INFO:root:loaded pretrained predictor from epoch 10 with msg: <All keys matched successfully>
+INFO:root:loaded pretrained action encoder from epoch 10 with msg: <All keys matched successfully>
+INFO:root:loaded pretrained proprio encoder from epoch 10 with msg: <All keys matched successfully>
+INFO:root:📉 Loss weights: L2=1.0
+{
+  "backend": {
+    "fall_back_to_raw_if_unsupported": false,
+    "kind": "swm_lance",
+    "lance_uri": "/home/ps/Code/yqy/DINO-WM/jepawm_data/_lance_20260528/PushT.lance"
+  },
+  "change_mse_model": 0.12045077013406781,
+  "change_mse_model_by_horizon": {
+    "1": 0.12045077013406781,
+    "2": 0.13944224389956764,
+    "3": 0.1492614759632268,
+    "4": 0.15585481332818316,
+    "5": 0.16167129258842244,
+    "6": 0.16718078466643274
+  },
+  "change_mse_persist": 0.29162689164324845,
+  "change_mse_persist_by_horizon": {
+    "1": 0.29162689164324845,
+    "2": 0.42993189434034634,
+    "3": 0.5031661433104568,
+    "4": 0.5550679422057836,
+    "5": 0.5975745103352189,
+    "6": 0.6367444278919592
+  },
+  "change_skill": 0.5869696053907915,
+  "change_skill_by_horizon": {
+    "1": 0.5869696053907915,
+    "2": 0.6756643418755502,
+    "3": 0.7033554861597047,
+    "4": 0.7192148897865873,
+    "5": 0.729454168823683,
+    "6": 0.7374444481282536
+  },
+  "checkpoint": "/home/ps/Code/yqy/DINO-WM/jepawm_checkpoints/mgvt_stage2c_3seed_20260531/pusht_stage2c_pred_adaln_depth1_lance_h4_seed235/jepa-latest.pth.tar",
+  "config": "/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/pusht_stage2c_pred_adaln_depth1_lance_h4_seed235/config.yaml",
+  "deterministic_encode_max_abs_diff": 0.0,
+  "diagnostic_batch_time_ms": 146.9519761718265,
+  "flops_per_forward_estimate": null,
+  "latent_mean": -6.299042262798312e-10,
+  "latent_std": 0.9999992986613849,
+  "mamba_backend": null,
+  "max_horizon": 6,
+  "model": "AdaLN",
+  "moved_region_change_skill": 0.45596930108404043,
+  "moved_region_change_skill_by_horizon": {
+    "1": 0.45596930108404043,
+    "2": 0.5730158566910561,
+    "3": 0.611046821951303,
+    "4": 0.6324125890949239,
+    "5": 0.6466467531874309,
+    "6": 0.6589436494129106
+  },
+  "moved_region_counts_by_horizon": {
+    "1": 170452,
+    "2": 167722,
+    "3": 168062,
+    "4": 168360,
+    "5": 168197,
+    "6": 168179
+  },
+  "moved_region_mask": {
+    "denominator_floor": 0.0,
+    "dilation": 1,
+    "min_floor": 0.0,
+    "source": "target_side_persistence_patch_mse",
+    "top_frac": 0.2
+  },
+  "moved_region_mse_model": 0.06589952934754272,
+  "moved_region_mse_model_by_horizon": {
+    "1": 0.06589952934754272,
+    "2": 0.08109046467823723,
+    "3": 0.09027803551784577,
+    "4": 0.09704116290865786,
+    "5": 0.10256290922842651,
+    "6": 0.10693849433141017
+  },
+  "moved_region_mse_persist": 0.12113200501158246,
+  "moved_region_mse_persist_by_horizon": {
+    "1": 0.12113200501158246,
+    "2": 0.1899144639185449,
+    "3": 0.2321051494443451,
+    "4": 0.26399479424423833,
+    "5": 0.2902560260973899,
+    "6": 0.313550808091765
+  },
+  "mse_model": 0.03794792730108475,
+  "mse_model_by_horizon": {
+    "1": 0.03794792730108475,
+    "2": 0.04583543372453138,
+    "3": 0.05086987138146144,
+    "4": 0.05446046500255225,
+    "5": 0.05736720158902593,
+    "6": 0.059770061809756414
+  },
+  "mse_persist": 0.058872624717455,
+  "mse_persist_by_horizon": {
+    "1": 0.058872624717455,
+    "2": 0.09115316432661714,
+    "3": 0.11249261638232037,
+    "4": 0.12837939190301922,
+    "5": 0.14078194828687515,
+    "6": 0.15182378418677675
+  },
+  "normalization_note": "Validation loader uses train-split dataset statistics; no val statistics are recomputed.",
+  "num_batches": 424,
+  "num_val_windows": 1695,
+  "param_count": 343480,
+  "prefix": 1,
+  "proprio_mse_model": 0.00013261856433109911,
+  "proprio_mse_model_by_horizon": {
+    "1": 0.00013261856433109911,
+    "2": 0.0002134516946820317,
+    "3": 0.0002925908922562568,
+    "4": 0.0003725731984030862,
+    "5": 0.00045384609286060727,
+    "6": 0.0005319384512543722
+  },
+  "proprio_mse_persist": 0.03565733997717192,
+  "proprio_mse_persist_by_horizon": {
+    "1": 0.03565733997717192,
+    "2": 0.07017505439245596,
+    "3": 0.0905489933701743,
+    "4": 0.10487714022134258,
+    "5": 0.11580058504610287,
+    "6": 0.12364286935083282
+  },
+  "proprio_skill": 0.9962807499264947,
+  "proprio_skill_by_horizon": {
+    "1": 0.9962807499264947,
+    "2": 0.9969582966977368,
+    "3": 0.9967687007732917,
+    "4": 0.9964475271005981,
+    "5": 0.9960807962008144,
+    "6": 0.9956977830258451
+  },
+  "seed": 235,
+  "skill": 0.3554232126865976,
+  "skill_by_horizon": {
+    "1": 0.3554232126865976,
+    "2": 0.49716025699014355,
+    "3": 0.5477936862222694,
+    "4": 0.5757849901353875,
+    "5": 0.5925102451904753,
+    "6": 0.6063195096215883
+  },
+  "task": "PushT",
+  "top_k_patches": 32,
+  "train_step_time_ms": 273.2290047609999
+}
+=== DONE pusht_stage2c_pred_adaln_depth1_lance_h4_seed235 2026-06-01T23:35:28+08:00 ===

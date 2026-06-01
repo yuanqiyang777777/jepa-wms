@@ -1,0 +1,4 @@
+
+=== RUN 20260602_mgvt_d1a_wall_mlp_trend_dim16_seed234 2026-06-01T23:57:37+08:00 ===
+config=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_smoke_20260602_mlp_trend_dim16/20260602_mgvt_d1a_wall_mlp_trend_dim16_seed234/config.yaml
+SKIP completed run: 20260602_mgvt_d1a_wall_mlp_trend_dim16_seed234

@@ -1,0 +1,27 @@
+MGVT-D Stage-D1 baseline re-diagnostics started 2026-06-01T23:06:57+08:00
+run_root=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_baseline_rediag_20260602
+src_log=/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531
+src_ckpt=/home/ps/Code/yqy/DINO-WM/jepawm_checkpoints/mgvt_stage2c_3seed_20260531
+devices=cuda:0 cuda:1 cuda:2 cuda:3 cuda:4
+max_horizon=6
+moved_top_frac=0.20
+moved_min_floor=0.0
+moved_denominator_floor=0.0
+moved_dilation=1
+QUEUE maze_stage2c_pred_adaln_depth1_lance_h4_seed234 device=cuda:0
+QUEUE maze_stage2c_pred_adaln_depth1_lance_h4_seed235 device=cuda:1
+QUEUE maze_stage2c_pred_adaln_depth1_lance_h4_seed236 device=cuda:2
+QUEUE mw_r_stage2c_pred_adaln_depth1_lance_h4_seed1 device=cuda:3
+QUEUE mw_r_stage2c_pred_adaln_depth1_lance_h4_seed2 device=cuda:4
+QUEUE mw_r_stage2c_pred_adaln_depth1_lance_h4_seed3 device=cuda:0
+QUEUE mw_rw_stage2c_pred_adaln_depth1_lance_h4_seed1 device=cuda:1
+QUEUE mw_rw_stage2c_pred_adaln_depth1_lance_h4_seed2 device=cuda:2
+QUEUE mw_rw_stage2c_pred_adaln_depth1_lance_h4_seed3 device=cuda:3
+QUEUE pusht_stage2c_pred_adaln_depth1_lance_h4_seed234 device=cuda:4
+QUEUE pusht_stage2c_pred_adaln_depth1_lance_h4_seed235 device=cuda:0
+QUEUE pusht_stage2c_pred_adaln_depth1_lance_h4_seed236 device=cuda:1
+QUEUE wall_stage2c_pred_adaln_depth1_lance_h4_seed234 device=cuda:2
+QUEUE wall_stage2c_pred_adaln_depth1_lance_h4_seed235 device=cuda:3
+QUEUE wall_stage2c_pred_adaln_depth1_lance_h4_seed236 device=cuda:4
+wrote D1 summary for 90 horizon rows to /home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_baseline_rediag_20260602/summary
+MGVT-D Stage-D1 baseline re-diagnostics finished 2026-06-01T23:35:32+08:00

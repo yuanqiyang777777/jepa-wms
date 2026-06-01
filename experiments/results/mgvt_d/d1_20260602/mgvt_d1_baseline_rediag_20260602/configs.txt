@@ -1,0 +1,15 @@
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/maze_stage2c_pred_adaln_depth1_lance_h4_seed234/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/maze_stage2c_pred_adaln_depth1_lance_h4_seed235/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/maze_stage2c_pred_adaln_depth1_lance_h4_seed236/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/mw_r_stage2c_pred_adaln_depth1_lance_h4_seed1/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/mw_r_stage2c_pred_adaln_depth1_lance_h4_seed2/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/mw_r_stage2c_pred_adaln_depth1_lance_h4_seed3/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/mw_rw_stage2c_pred_adaln_depth1_lance_h4_seed1/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/mw_rw_stage2c_pred_adaln_depth1_lance_h4_seed2/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/mw_rw_stage2c_pred_adaln_depth1_lance_h4_seed3/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/pusht_stage2c_pred_adaln_depth1_lance_h4_seed234/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/pusht_stage2c_pred_adaln_depth1_lance_h4_seed235/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/pusht_stage2c_pred_adaln_depth1_lance_h4_seed236/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/wall_stage2c_pred_adaln_depth1_lance_h4_seed234/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/wall_stage2c_pred_adaln_depth1_lance_h4_seed235/config.yaml
+/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_stage2c_3seed_20260531/wall_stage2c_pred_adaln_depth1_lance_h4_seed236/config.yaml

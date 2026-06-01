@@ -1,0 +1,449 @@
+[INFO    ][2026-06-01 22:20:56][root                ][process_main             ] called-params /home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_smoke_20260602_retry6/20260602_mgvt_d1a_pusht_mamba_trend_dim16_seed234/config.yaml
+[INFO    ][2026-06-01 22:20:56][root                ][process_main             ] ✅ Config loaded
+{   'app': 'vjepa_wm',
+    'checkpoint_folder': '/home/ps/Code/yqy/DINO-WM/jepawm_checkpoints/mgvt_d1_smoke_20260602_retry6/20260602_mgvt_d1a_pusht_mamba_trend_dim16_seed234',
+    'cpus_per_task': 16,
+    'data': {   'backend': {   'fall_back_to_raw_if_unsupported': False,
+                               'kind': 'swm_lance',
+                               'lance_uri': '/home/ps/Code/yqy/DINO-WM/jepawm_data/_lance_20260528/PushT.lance'},
+                'custom': {   'action_skip': 1,
+                              'custom_teleop_dset': None,
+                              'filter_first_episodes': None,
+                              'filter_tasks': None,
+                              'frameskip': 5,
+                              'normalize_action': True,
+                              'num_hist': 2,
+                              'num_pred': 4,
+                              'split_ratio': 0.9,
+                              'state_skip': 1,
+                              'traj_subset': True,
+                              'with_reward': False},
+                'dataset_type': 'custom',
+                'datasets': ['PushT'],
+                'datasets_weights': None,
+                'droid': {   'camera_frame': False,
+                             'camera_views': [2],
+                             'dataset_fpcs': [8],
+                             'droid_to_rcasa_action_format': 1,
+                             'fps': 4,
+                             'mpk_manifest_patterns': [],
+                             'rcasa_to_droid_action_format': False},
+                'img_size': 224,
+                'loader': {   'batch_size': 8,
+                              'num_workers': 16,
+                              'persistent_workers': True,
+                              'pin_mem': True},
+                'seed': 234,
+                'validation': {   'num_frames_val': 6,
+                                  'val_dataset_batch_size': 4,
+                                  'val_dataset_camera_views': None,
+                                  'val_dataset_drop_last': False,
+                                  'val_dataset_fpcs': [8],
+                                  'val_datasets': [],
+                                  'val_datasets_1': None,
+                                  'val_viz_rank0_loader': False}},
+    'data_aug': {   'auto_augment': False,
+                    'motion_shift': False,
+                    'normalize': [[0.485, 0.456, 0.406], [0.229, 0.224, 0.225]],
+                    'random_horizontal_flip': False,
+                    'random_resize_aspect_ratio': [1.0, 1.0],
+                    'random_resize_scale': [1.777, 1.777],
+                    'reprob': 0.0},
+    'evals': None,
+    'folder': '/home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_smoke_20260602_retry6/20260602_mgvt_d1a_pusht_mamba_trend_dim16_seed234',
+    'logging': {   'wandb': {   'debug': False,
+                                'disable_wandb_media': True,
+                                'log_media_locally': True,
+                                'project': 'vjepa_wm',
+                                'use_wandb': False},
+                   'write_tag': 'jepa'},
+    'loss': {   'cos_loss_weight': 0.0,
+                'l1_loss_weight': 0.0,
+                'l2_loss_weight': 1.0,
+                'smooth_l1_loss_weight': 0.0},
+    'meta': {   'data_traj_rollout_eval': {   'data_traj_decode_gt': False,
+                                              'data_traj_eval_ctxt_window': 2,
+                                              'data_traj_eval_rollout_steps': 4,
+                                              'do_data_traj_rollout_eval': False},
+                'dtype': 'bfloat16',
+                'energy_landscape_eval': {   'do_energy_landscape_eval': False,
+                                             'energy_landscape_ctxt_window': 2,
+                                             'energy_landscape_rollout_steps': 4},
+                'eval_freq': 999999,
+                'freeze_encoder': True,
+                'light_eval_freq': 999999,
+                'light_eval_only_mode': False,
+                'load_checkpoint': True,
+                'load_opt_scale_epoch': True,
+                'plan_only_eval_mode': False,
+                'pretrained_path': None,
+                'quick_debug': True,
+                'read_checkpoint': None,
+                'save_every_freq': 1,
+                'seed': 234},
+    'model': {   'action_conditioning': 'token',
+                 'action_encoder': {   'act_mlp': False,
+                                       'action_emb_dim': 0,
+                                       'action_encoder_inpred': False,
+                                       'action_tokens': 1},
+                 'attn': {   'local_window_h': -1,
+                             'local_window_time': 3,
+                             'local_window_w': -1},
+                 'grid_size': 16,
+                 'heads_cfg': {'architectures': {}, 'pretrain_dec_path': None},
+                 'num_frames_pred': 6,
+                 'predictor': {   'L_trend_weight': 0.0,
+                                  'act_pred_projector': False,
+                                  'confidence_head': False,
+                                  'context_window': 2,
+                                  'd1_block': 'd1a',
+                                  'd1_variant': 'mamba_trend_dim16',
+                                  'd_h_dim': 16,
+                                  'delta_p_dim': None,
+                                  'dh_ablation': 'none',
+                                  'fdyn_type': 'mamba',
+                                  'init_scale_factor_adaln': 0,
+                                  'pred_depth': 1,
+                                  'pred_embed_dim': 128,
+                                  'pred_num_heads': 4,
+                                  'pred_type': 'mgvt_d_mamba',
+                                  'pred_use_extrinsics': False,
+                                  'proprio_flow': 'dyn_refine',
+                                  'require_cuda_mamba': True,
+                                  'state_dim': 64,
+                                  'tubelet_size': 1,
+                                  'use_SiLU': False,
+                                  'use_rope': True,
+                                  'use_sdpa': True},
+                 'proprio_encoder': {   'prop_mlp': False,
+                                        'proprio_emb_dim': 16,
+                                        'proprio_encoder_inpred': False,
+                                        'proprio_tokens': 0},
+                 'proprio_encoding': 'feature',
+                 'rollout_cfg': {   'ctxt_window_train_rollout': 2,
+                                    'do_parallel_rollout': False,
+                                    'do_sequential_rollout': True,
+                                    'prepend_gt': False,
+                                    'rollout_steps': 4,
+                                    'rollout_stop_gradient': True,
+                                    'sampling_scheduler': {   'end': 0.0,
+                                                              'start': 0.0,
+                                                              'type': 'linear'},
+                                    'train_rollout_prefixes': 'all'},
+                 'tubelet_size_enc': 1,
+                 'use_activation_checkpointing': False,
+                 'visual_encoder': {   'embed_dim': 384,
+                                       'enc_name': None,
+                                       'enc_type': 'dino',
+                                       'enc_use_rope': None,
+                                       'enc_version': 'dinov2_vits14',
+                                       'num_frames_enc': 16,
+                                       'pretrain_enc_ckpt_key': 'target_encoder',
+                                       'pretrain_enc_path': None,
+                                       'uniform_power': True,
+                                       'use_sdpa_enc': True},
+                 'wm_encoding': {   'batchify_video': True,
+                                    'dup_image': False,
+                                    'normalize_reps': True}},
+    'nodes': 1,
+    'optimization': {   'main_optimizer': 'transition_model',
+                        'train_heads': False,
+                        'transition_model': {   'betas': [0.9, 0.999],
+                                                'clip_grad': 1,
+                                                'eps': 1e-08,
+                                                'final_lr': 0.0005,
+                                                'final_weight_decay': 1e-06,
+                                                'ipe_scale': 1.0,
+                                                'iterations_per_epoch': 100,
+                                                'mixed_precision': True,
+                                                'num_epochs': 2,
+                                                'ref_lr': 0.0005,
+                                                'start_lr': 0.0005,
+                                                'use_radamw': False,
+                                                'warmup': 0,
+                                                'weight_decay': 1e-07}},
+    'tasks_per_node': 2,
+    'unroll_decode_evals': None}
+[INFO    ][2026-06-01 22:20:57][root                ][process_main             ] Running... (rank: 0/2)
+[INFO    ][2026-06-01 22:20:57][root                ][main                     ] Running pre-training of app: vjepa_wm
+[INFO    ][2026-06-01 22:21:00][app.vjepa_wm.train  ][main                     ] ⚙️  Using dtype: bfloat16
+[INFO    ][2026-06-01 22:21:00][Datasets utils      ][get_dataset_paths        ] Datapaths ['/home/ps/Code/yqy/DINO-WM/jepawm_data/pusht_noise']
+[INFO    ][2026-06-01 22:21:00][app.vjepa_wm.train  ][main                     ] 🚀 Initialized (rank/world-size) 1/2
+[INFO    ][2026-06-01 22:21:00][app.vjepa_wm.train  ][main                     ] 🆕 Training from scratch
+[INFO    ][2026-06-01 22:21:00][root                ][init_data                ] 📂 Data paths: ['/home/ps/Code/yqy/DINO-WM/jepawm_data/pusht_noise']
+[INFO    ][2026-06-01 22:21:00][app.vjepa_wm.train  ][main                     ] ⚙️  Using dtype: bfloat16
+[INFO    ][2026-06-01 22:21:00][Datasets utils      ][get_dataset_paths        ] Datapaths ['/home/ps/Code/yqy/DINO-WM/jepawm_data/pusht_noise']
+[INFO    ][2026-06-01 22:21:00][app.vjepa_wm.train  ][main                     ] 🚀 Initialized (rank/world-size) 0/2
+[INFO    ][2026-06-01 22:21:00][app.vjepa_wm.train  ][main                     ] 🆕 Training from scratch
+[INFO    ][2026-06-01 22:21:00][root                ][init_data                ] 📂 Data paths: ['/home/ps/Code/yqy/DINO-WM/jepawm_data/pusht_noise']
+[INFO    ][2026-06-01 22:21:01][app.plan_common.datasets.stores.lance_window][__init__                 ] Opened Lance PointMaze dataset (18685 episodes) at /home/ps/Code/yqy/DINO-WM/jepawm_data/_lance_20260528/PushT.lance/train.lance
+[INFO    ][2026-06-01 22:21:01][app.plan_common.datasets.stores.lance_window][__init__                 ] Opened Lance PointMaze dataset (18685 episodes) at /home/ps/Code/yqy/DINO-WM/jepawm_data/_lance_20260528/PushT.lance/train.lance
+[INFO    ][2026-06-01 22:21:01][app.plan_common.datasets.stores.lance_window][__init__                 ] Opened Lance PointMaze dataset (21 episodes) at /home/ps/Code/yqy/DINO-WM/jepawm_data/_lance_20260528/PushT.lance/val.lance
+[INFO    ][2026-06-01 22:21:02][app.plan_common.datasets.stores.lance_window][__init__                 ] Opened Lance PointMaze dataset (21 episodes) at /home/ps/Code/yqy/DINO-WM/jepawm_data/_lance_20260528/PushT.lance/val.lance
+[INFO    ][2026-06-01 22:21:03][root                ][init_data                ] VideoDataset unsupervised data loader created
+[INFO    ][2026-06-01 22:21:03][app.vjepa_wm.train  ][main                     ] 📊 Iterations per epoch: 100 (dataset size: 112179)
+[INFO    ][2026-06-01 22:21:03][dinov2              ][__init__                 ] using MLP layer as FFN
+[INFO    ][2026-06-01 22:21:03][root                ][init_data                ] VideoDataset unsupervised data loader created
+[INFO    ][2026-06-01 22:21:03][app.vjepa_wm.train  ][main                     ] 📊 Iterations per epoch: 100 (dataset size: 112179)
+[INFO    ][2026-06-01 22:21:03][dinov2              ][__init__                 ] using MLP layer as FFN
+[INFO    ][2026-06-01 22:21:03][root                ][init_video_model         ] Encoder: DinoEncoder(
+  (base_model): DinoVisionTransformer(
+    (patch_embed): PatchEmbed(
+      (proj): Conv2d(3, 384, kernel_size=(14, 14), stride=(14, 14))
+      (norm): Identity()
+    )
+    (blocks): ModuleList(
+      (0-11): 12 x NestedTensorBlock(
+        (norm1): LayerNorm((384,), eps=1e-06, elementwise_affine=True)
+        (attn): MemEffAttention(
+          (qkv): Linear(in_features=384, out_features=1152, bias=True)
+          (attn_drop): Dropout(p=0.0, inplace=False)
+          (proj): Linear(in_features=384, out_features=384, bias=True)
+          (proj_drop): Dropout(p=0.0, inplace=False)
+        )
+        (ls1): LayerScale()
+        (drop_path1): Identity()
+        (norm2): LayerNorm((384,), eps=1e-06, elementwise_affine=True)
+        (mlp): Mlp(
+          (fc1): Linear(in_features=384, out_features=1536, bias=True)
+          (act): GELU(approximate='none')
+          (fc2): Linear(in_features=1536, out_features=384, bias=True)
+          (drop): Dropout(p=0.0, inplace=False)
+        )
+        (ls2): LayerScale()
+        (drop_path2): Identity()
+      )
+    )
+    (norm): LayerNorm((384,), eps=1e-06, elementwise_affine=True)
+    (head): Identity()
+  )
+)
+[INFO    ][2026-06-01 22:21:03][root                ][init_video_model         ] 🧠 Encoder: DinoEncoder (22,056,576 params, frozen=True)
+[INFO    ][2026-06-01 22:21:04][root                ][init_video_model         ] Encoder: DinoEncoder(
+  (base_model): DinoVisionTransformer(
+    (patch_embed): PatchEmbed(
+      (proj): Conv2d(3, 384, kernel_size=(14, 14), stride=(14, 14))
+      (norm): Identity()
+    )
+    (blocks): ModuleList(
+      (0-11): 12 x NestedTensorBlock(
+        (norm1): LayerNorm((384,), eps=1e-06, elementwise_affine=True)
+        (attn): MemEffAttention(
+          (qkv): Linear(in_features=384, out_features=1152, bias=True)
+          (attn_drop): Dropout(p=0.0, inplace=False)
+          (proj): Linear(in_features=384, out_features=384, bias=True)
+          (proj_drop): Dropout(p=0.0, inplace=False)
+        )
+        (ls1): LayerScale()
+        (drop_path1): Identity()
+        (norm2): LayerNorm((384,), eps=1e-06, elementwise_affine=True)
+        (mlp): Mlp(
+          (fc1): Linear(in_features=384, out_features=1536, bias=True)
+          (act): GELU(approximate='none')
+          (fc2): Linear(in_features=1536, out_features=384, bias=True)
+          (drop): Dropout(p=0.0, inplace=False)
+        )
+        (ls2): LayerScale()
+        (drop_path2): Identity()
+      )
+    )
+    (norm): LayerNorm((384,), eps=1e-06, elementwise_affine=True)
+    (head): Identity()
+  )
+)
+[INFO    ][2026-06-01 22:21:04][root                ][init_video_model         ] 🧠 Encoder: DinoEncoder (22,056,576 params, frozen=True)
+[INFO    ][2026-06-01 22:21:04][app.plan_common.models.mgvt_dynamics_guided][__init__                 ] Initialized DynamicsGuidedPredictor(fdyn_type=mamba, guidance=trend, d_h_dim=16, proprio_flow=dyn_refine, refiner_depth=1)
+[INFO    ][2026-06-01 22:21:04][root                ][init_video_model         ] Predictor: DynamicsGuidedPredictor(
+  (predictor_embed): Linear(in_features=768, out_features=128, bias=True)
+  (visual_state): Sequential(
+    (0): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=768, out_features=64, bias=True)
+    (2): GELU(approximate='none')
+    (3): Linear(in_features=64, out_features=64, bias=True)
+  )
+  (proprio_state): Sequential(
+    (0): LayerNorm((16,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=16, out_features=64, bias=True)
+    (2): GELU(approximate='none')
+  )
+  (state_fuse): Sequential(
+    (0): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=128, out_features=64, bias=True)
+    (2): GELU(approximate='none')
+  )
+  (action_norm): LayerNorm((144,), eps=1e-05, elementwise_affine=True)
+  (dyn_in): Sequential(
+    (0): LayerNorm((208,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=208, out_features=128, bias=True)
+    (2): GELU(approximate='none')
+  )
+  (temporal_mixer): TemporalMambaOrGRU(
+    (scan): Mamba(
+      (in_proj): Linear(in_features=128, out_features=512, bias=False)
+      (conv1d): Conv1d(256, 256, kernel_size=(4,), stride=(1,), padding=(3,), groups=256)
+      (act): SiLU()
+      (x_proj): Linear(in_features=256, out_features=40, bias=False)
+      (dt_proj): Linear(in_features=8, out_features=256, bias=True)
+      (out_proj): Linear(in_features=256, out_features=128, bias=False)
+    )
+  )
+  (f_dyn): Sequential(
+    (0): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=128, out_features=16, bias=True)
+  )
+  (guidance): Sequential(
+    (0): LayerNorm((16,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=16, out_features=128, bias=True)
+    (2): GELU(approximate='none')
+    (3): Linear(in_features=128, out_features=128, bias=True)
+  )
+  (guidance_gate): Sequential(
+    (0): LayerNorm((16,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=16, out_features=128, bias=True)
+    (2): Sigmoid()
+  )
+  (refine_in): Linear(in_features=288, out_features=128, bias=True)
+  (refiner): ResidualMLP(
+    (blocks): ModuleList(
+      (0): Sequential(
+        (0): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+        (1): Linear(in_features=128, out_features=512, bias=True)
+        (2): GELU(approximate='none')
+        (3): Linear(in_features=512, out_features=128, bias=True)
+      )
+    )
+  )
+  (refine_norm): LayerNorm((128,), eps=1e-06, elementwise_affine=True)
+  (predictor_proj): Linear(in_features=128, out_features=384, bias=True)
+  (proprio_head): Sequential(
+    (0): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=128, out_features=128, bias=True)
+    (2): GELU(approximate='none')
+    (3): Linear(in_features=128, out_features=16, bias=True)
+  )
+)
+[INFO    ][2026-06-01 22:21:04][root                ][init_video_model         ] 🔮 Predictor: DynamicsGuidedPredictor (567,744 params)
+[INFO    ][2026-06-01 22:21:04][root                ][init_video_model         ] Action encoder output dim: 144
+[INFO    ][2026-06-01 22:21:04][root                ][init_opt                 ] Using AdamW
+[INFO    ][2026-06-01 22:21:04][root                ][init_opt                 ] Using WarmupCosineSchedule with warmup_steps=0, T_max=200
+[INFO    ][2026-06-01 22:21:05][app.plan_common.models.mgvt_dynamics_guided][__init__                 ] Initialized DynamicsGuidedPredictor(fdyn_type=mamba, guidance=trend, d_h_dim=16, proprio_flow=dyn_refine, refiner_depth=1)
+[INFO    ][2026-06-01 22:21:05][root                ][init_video_model         ] Predictor: DynamicsGuidedPredictor(
+  (predictor_embed): Linear(in_features=768, out_features=128, bias=True)
+  (visual_state): Sequential(
+    (0): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=768, out_features=64, bias=True)
+    (2): GELU(approximate='none')
+    (3): Linear(in_features=64, out_features=64, bias=True)
+  )
+  (proprio_state): Sequential(
+    (0): LayerNorm((16,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=16, out_features=64, bias=True)
+    (2): GELU(approximate='none')
+  )
+  (state_fuse): Sequential(
+    (0): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=128, out_features=64, bias=True)
+    (2): GELU(approximate='none')
+  )
+  (action_norm): LayerNorm((144,), eps=1e-05, elementwise_affine=True)
+  (dyn_in): Sequential(
+    (0): LayerNorm((208,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=208, out_features=128, bias=True)
+    (2): GELU(approximate='none')
+  )
+  (temporal_mixer): TemporalMambaOrGRU(
+    (scan): Mamba(
+      (in_proj): Linear(in_features=128, out_features=512, bias=False)
+      (conv1d): Conv1d(256, 256, kernel_size=(4,), stride=(1,), padding=(3,), groups=256)
+      (act): SiLU()
+      (x_proj): Linear(in_features=256, out_features=40, bias=False)
+      (dt_proj): Linear(in_features=8, out_features=256, bias=True)
+      (out_proj): Linear(in_features=256, out_features=128, bias=False)
+    )
+  )
+  (f_dyn): Sequential(
+    (0): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=128, out_features=16, bias=True)
+  )
+  (guidance): Sequential(
+    (0): LayerNorm((16,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=16, out_features=128, bias=True)
+    (2): GELU(approximate='none')
+    (3): Linear(in_features=128, out_features=128, bias=True)
+  )
+  (guidance_gate): Sequential(
+    (0): LayerNorm((16,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=16, out_features=128, bias=True)
+    (2): Sigmoid()
+  )
+  (refine_in): Linear(in_features=288, out_features=128, bias=True)
+  (refiner): ResidualMLP(
+    (blocks): ModuleList(
+      (0): Sequential(
+        (0): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+        (1): Linear(in_features=128, out_features=512, bias=True)
+        (2): GELU(approximate='none')
+        (3): Linear(in_features=512, out_features=128, bias=True)
+      )
+    )
+  )
+  (refine_norm): LayerNorm((128,), eps=1e-06, elementwise_affine=True)
+  (predictor_proj): Linear(in_features=128, out_features=384, bias=True)
+  (proprio_head): Sequential(
+    (0): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=128, out_features=128, bias=True)
+    (2): GELU(approximate='none')
+    (3): Linear(in_features=128, out_features=16, bias=True)
+  )
+)
+[INFO    ][2026-06-01 22:21:05][root                ][init_video_model         ] 🔮 Predictor: DynamicsGuidedPredictor (567,744 params)
+[INFO    ][2026-06-01 22:21:05][root                ][init_video_model         ] Action encoder output dim: 144
+[INFO    ][2026-06-01 22:21:05][root                ][init_opt                 ] Using AdamW
+[INFO    ][2026-06-01 22:21:05][root                ][init_opt                 ] Using WarmupCosineSchedule with warmup_steps=0, T_max=200
+[INFO    ][2026-06-01 22:21:05][app.vjepa_wm.train  ][main                     ] DDP config: static_graph=False, find_unused_parameters=False, gradient_as_bucket_view=False, broadcast_buffers=True, bucket_cap_mb=None, comm_hook=none
+[INFO    ][2026-06-01 22:21:05][root                ][__init__                 ] 📉 Loss weights: L2=1.0
+[INFO    ][2026-06-01 22:21:05][root                ][__init__                 ] 📉 Loss weights: L2=1.0
+/home/ps/miniconda3/envs/jepa-wms/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/home/ps/miniconda3/envs/jepa-wms/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=VGG16_Weights.IMAGENET1K_V1`. You can also use `weights=VGG16_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/home/ps/miniconda3/envs/jepa-wms/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/home/ps/miniconda3/envs/jepa-wms/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=VGG16_Weights.IMAGENET1K_V1`. You can also use `weights=VGG16_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+Setting up [LPIPS] perceptual loss: trunk [vgg], v[0.1], spatial [off]
+Loading model from: /home/ps/miniconda3/envs/jepa-wms/lib/python3.10/site-packages/lpips/weights/v0.1/vgg.pth
+[INFO    ][2026-06-01 22:21:07][app.vjepa_wm.train  ][main                     ] Initializing loader...
+[INFO    ][2026-06-01 22:21:07][app.vjepa_wm.train  ][main                     ] 
+──────────────────────────────────────────────────
+[INFO    ][2026-06-01 22:21:07][app.vjepa_wm.train  ][main                     ] 📈 Epoch 1/2
+[INFO    ][2026-06-01 22:21:07][app.vjepa_wm.train  ][main                     ] ──────────────────────────────────────────────────
+Setting up [LPIPS] perceptual loss: trunk [vgg], v[0.1], spatial [off]
+Loading model from: /home/ps/miniconda3/envs/jepa-wms/lib/python3.10/site-packages/lpips/weights/v0.1/vgg.pth
+[INFO    ][2026-06-01 22:21:07][app.vjepa_wm.train  ][main                     ] Initializing loader...
+[INFO    ][2026-06-01 22:21:07][app.vjepa_wm.train  ][main                     ] 
+──────────────────────────────────────────────────
+[INFO    ][2026-06-01 22:21:07][app.vjepa_wm.train  ][main                     ] 📈 Epoch 1/2
+[INFO    ][2026-06-01 22:21:07][app.vjepa_wm.train  ][main                     ] ──────────────────────────────────────────────────
+[INFO    ][2026-06-01 22:21:08][app.vjepa_wm.train  ][log                      ] [1,     0] loss: 2.303 | 
+[INFO    ][2026-06-01 22:21:08][app.vjepa_wm.train  ][log_stats                ] [1,     0] [mem: 6.56e+02] [gpu: 1320.6 ms][wall: 1618.6 ms]
+[INFO    ][2026-06-01 22:21:08][app.vjepa_wm.train  ][log                      ] [1,     0] loss: 2.377 | 
+[INFO    ][2026-06-01 22:21:08][app.vjepa_wm.train  ][log_stats                ] [1,     0] [mem: 6.56e+02] [gpu: 1293.6 ms][wall: 1597.6 ms]
+[INFO    ][2026-06-01 22:21:10][app.vjepa_wm.train  ][main                     ] avg. loss 1.502
+[INFO    ][2026-06-01 22:21:10][app.vjepa_wm.train  ][main                     ] 
+──────────────────────────────────────────────────
+[INFO    ][2026-06-01 22:21:10][app.vjepa_wm.train  ][main                     ] 📈 Epoch 2/2
+[INFO    ][2026-06-01 22:21:10][app.vjepa_wm.train  ][main                     ] ──────────────────────────────────────────────────
+[INFO    ][2026-06-01 22:21:10][app.vjepa_wm.train  ][main                     ] avg. loss 1.523
+[INFO    ][2026-06-01 22:21:10][app.vjepa_wm.train  ][main                     ] 
+──────────────────────────────────────────────────
+[INFO    ][2026-06-01 22:21:10][app.vjepa_wm.train  ][main                     ] 📈 Epoch 2/2
+[INFO    ][2026-06-01 22:21:10][app.vjepa_wm.train  ][main                     ] ──────────────────────────────────────────────────
+[INFO    ][2026-06-01 22:21:10][app.vjepa_wm.train  ][log                      ] [2,     0] loss: 0.833 | 
+[INFO    ][2026-06-01 22:21:10][app.vjepa_wm.train  ][log_stats                ] [2,     0] [mem: 6.68e+02] [gpu: 212.0 ms][wall: 289.7 ms]
+[INFO    ][2026-06-01 22:21:10][app.vjepa_wm.train  ][log                      ] [2,     0] loss: 0.985 | 
+[INFO    ][2026-06-01 22:21:10][app.vjepa_wm.train  ][log_stats                ] [2,     0] [mem: 6.68e+02] [gpu: 123.5 ms][wall: 208.7 ms]
+[INFO    ][2026-06-01 22:21:11][app.vjepa_wm.train  ][main                     ] avg. loss 0.855
+[INFO    ][2026-06-01 22:21:11][app.vjepa_wm.train  ][main                     ] avg. loss 0.845
+[rank1]:[W601 22:21:12.555052143 ProcessGroupNCCL.cpp:1476] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+[rank0]:[W601 22:21:12.750168214 ProcessGroupNCCL.cpp:1476] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())

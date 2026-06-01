@@ -1,0 +1,16 @@
+QUEUE maze_stage2c_pred_adaln_depth1_lance_h4_seed234 device=cuda:0
+QUEUE maze_stage2c_pred_adaln_depth1_lance_h4_seed235 device=cuda:1
+QUEUE maze_stage2c_pred_adaln_depth1_lance_h4_seed236 device=cuda:2
+QUEUE mw_r_stage2c_pred_adaln_depth1_lance_h4_seed1 device=cuda:3
+QUEUE mw_r_stage2c_pred_adaln_depth1_lance_h4_seed2 device=cuda:4
+QUEUE mw_r_stage2c_pred_adaln_depth1_lance_h4_seed3 device=cuda:0
+QUEUE mw_rw_stage2c_pred_adaln_depth1_lance_h4_seed1 device=cuda:1
+QUEUE mw_rw_stage2c_pred_adaln_depth1_lance_h4_seed2 device=cuda:2
+QUEUE mw_rw_stage2c_pred_adaln_depth1_lance_h4_seed3 device=cuda:3
+QUEUE pusht_stage2c_pred_adaln_depth1_lance_h4_seed234 device=cuda:4
+QUEUE pusht_stage2c_pred_adaln_depth1_lance_h4_seed235 device=cuda:0
+QUEUE pusht_stage2c_pred_adaln_depth1_lance_h4_seed236 device=cuda:1
+QUEUE wall_stage2c_pred_adaln_depth1_lance_h4_seed234 device=cuda:2
+QUEUE wall_stage2c_pred_adaln_depth1_lance_h4_seed235 device=cuda:3
+QUEUE wall_stage2c_pred_adaln_depth1_lance_h4_seed236 device=cuda:4
+wrote D1 summary for 90 horizon rows to /home/ps/Code/yqy/DINO-WM/jepawm_logs/mgvt_d1_baseline_rediag_20260602/summary
