@@ -93,6 +93,7 @@ The gate below applies only after the remaining D1-A smokes pass and before any 
 - Significance: one-sided paired sign-flip/permutation test over the 15 H4 moved-region deltas; apply Holm-Bonferroni correction across D1-A candidate comparisons. Report paired mean delta, 95% bootstrap CI, uncorrected p, and corrected p.
 - Harm guardrail: H4 global `skill` and `proprio_skill` paired mean deltas must each be at least `-0.020` overall and per task. Any H<=4 non-finite metric is an immediate fail.
 - Control interpretation: `adaln_param_match` can beat the baseline as a capacity control, but it cannot support the dynamics-decoupling claim. A trend model only supports the core claim if it beats both Stage-2c and the parameter/FLOP-matched AdaLN control under the same metric family.
+- Parameter/FLOP control note: `adaln_param_match` is parameter-matched to the Mamba lead candidate at roughly 569k trainable predictor-side parameters; the reported AdaLN FLOPs are an analytic linear-only proxy and must not be used to claim exact FLOP parity.
 - Stop condition: if no trend variant (`raw_action_guidance`, `mlp_trend_dim16`, `gru_trend_dim16`, `mamba_trend_dim16`) clears this gate, stop after D1-A and write a neutral/negative D1-A gate. Do not proceed to D1-B/C/D/E by momentum.
 
 ## Cross-Position Diagnostic Definition
