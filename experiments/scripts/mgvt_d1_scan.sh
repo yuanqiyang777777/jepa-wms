@@ -282,6 +282,9 @@ PY
 for config in "${CONFIGS[@]}"; do
   stem="$(basename "$config" .yaml)"
   task="$(task_from_stem "$stem")"
+  if [ -n "$TASK_FILTER" ] && [ "$task" != "$TASK_FILTER" ]; then
+    continue
+  fi
   seeds="$(seed_list_for_task "$task")"
   for seed in $seeds; do
     run_one "$config" "$seed"
@@ -293,4 +296,3 @@ python experiments/scripts/summarize_mgvt_d1.py \
   --output-dir "$RUN_ROOT/summary"
 
 echo "MGVT-D Stage-D1 scan finished $(date -Iseconds)" | tee "$RUN_ROOT/scan_end.txt"
-
