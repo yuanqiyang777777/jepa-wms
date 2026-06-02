@@ -135,6 +135,8 @@ import math
 import sys
 from pathlib import Path
 
+from src.utils.yaml_utils import load_yaml
+
 run_dir = Path(sys.argv[1])
 ckpt_dir = Path(sys.argv[2])
 cmd_status = int(sys.argv[3])
@@ -158,10 +160,52 @@ else:
 if not launch_log.exists():
     errors.append(f"missing launch log: {launch_log}")
 else:
-    text = launch_log.read_text(errors="replace").lower()
-    for marker in ("out of memory", "cuda error", "traceback"):
+    raw = launch_log.read_text(errors="replace")
+    low_lines = raw.lower().splitlines()
+    text = raw.lower()
+    for marker in ("out of memory", "cuda error"):
         if marker in text:
             errors.append(f"launch.log contains {marker!r}")
+    if "traceback" in text:
+        last_avg = max(
+            (idx for idx, line in enumerate(low_lines) if "avg. loss" in line),
+            default=-1,
+        )
+        final_epoch_ok = False
+        try:
+            cfg = load_yaml(str(run_dir / "config.yaml"))
+            num_epochs = int(cfg["optimization"]["transition_model"]["num_epochs"])
+            final_epoch_ok = f"epoch {num_epochs}/{num_epochs}" in text
+        except Exception:
+            final_epoch_ok = False
+
+        traceback_lines = [
+            idx
+            for idx, line in enumerate(low_lines)
+            if "traceback (most recent call last)" in line
+        ]
+
+        def is_dataloader_finalizer_traceback(idx):
+            context_before = "\n".join(low_lines[max(0, idx - 3):idx])
+            context_after = "\n".join(low_lines[idx:min(len(low_lines), idx + 20)])
+            return (
+                idx > last_avg
+                and "exception ignored in:" in context_before
+                and "_multiprocessingdataloaderiter.__del__" in context_before
+                and "dataloader worker" in context_after
+                and "aborted" in context_after
+            )
+
+        benign_teardown = (
+            cmd_status == 0
+            and latest_ckpt.exists()
+            and final_epoch_ok
+            and last_avg >= 0
+            and traceback_lines
+            and all(is_dataloader_finalizer_traceback(idx) for idx in traceback_lines)
+        )
+        if not benign_teardown:
+            errors.append("launch.log contains a non-teardown 'traceback'")
 
 if errors:
     print("Training health check failed:", file=sys.stderr)
