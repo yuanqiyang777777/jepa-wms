@@ -17,6 +17,7 @@ from functools import partial
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 import torch.nn as nn
 
 from src.utils.logging import get_logger
@@ -375,6 +376,7 @@ class DynamicsGuidedPredictor(nn.Module):
         x: torch.Tensor,
         actions: torch.Tensor,
         proprio: torch.Tensor | None = None,
+        future_video_features: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, None, torch.Tensor | None]:
         # x: B T V H W D
         x_context = self._stack_context(x)
@@ -384,6 +386,7 @@ class DynamicsGuidedPredictor(nn.Module):
         action = self._action_summary(actions)
         state = self._compact_state(x, proprio) if self.uses_compact_state else None
         d_h = self._fdyn(state, action)
+        self._last_d_h = d_h
 
         guidance = self.guidance(d_h).unsqueeze(2)
         gate = self.guidance_gate(d_h).unsqueeze(2)
@@ -475,3 +478,312 @@ def vit_predictor_mgvt_d_mamba(**kwargs):
 
 def vit_predictor_mgvt_d_sparse_control(**kwargs):
     return _make_predictor("mlp", guidance_mode="sparse_control", **kwargs)
+
+
+class D1RTrendPredictor(DynamicsGuidedPredictor):
+    """D1R explicit teacher-grounded dynamics trend scaffold.
+
+    The deployable forward path is still the D1 dynamics-guided predictor.  D1R
+    adds a future-grounded teacher trend ``r_h`` and staged auxiliary losses that
+    are computed inside the predictor forward when the training loop supplies
+    ``future_video_features``.  That keeps DDP/autograd ownership inside the
+    wrapped module while preserving the existing Stage-2 predictor contract.
+    """
+
+    VALID_STAGES = {"implicit", "r1_teacher", "r2_student", "g_refine", "oracle"}
+
+    def __init__(
+        self,
+        *args,
+        r_h_dim: int = 64,
+        p_dyn_dim: int | None = None,
+        d1r_stage: str = "g_refine",
+        lambda_delta: float = 1.0,
+        lambda_inv_r: float = 0.1,
+        lambda_sig: float = 0.01,
+        lambda_trend: float = 1.0,
+        lambda_inv_d: float = 0.1,
+        use_inv_d: bool = False,
+        **kwargs,
+    ):
+        kwargs.setdefault("fdyn_type", "mlp")
+        kwargs.setdefault("d_h_dim", r_h_dim)
+        kwargs.setdefault("proprio_flow", "no_proprio")
+        super().__init__(*args, **kwargs)
+        if d1r_stage not in self.VALID_STAGES:
+            raise ValueError(f"Unsupported d1r_stage: {d1r_stage}")
+        if int(r_h_dim) != self.d_h_dim:
+            raise ValueError("D1R first smoke requires dim(r_h) == dim(d_h)")
+
+        act_layer = nn.SiLU if kwargs.get("use_silu", False) else nn.GELU
+        self.r_h_dim = int(r_h_dim)
+        self.p_dyn_dim = int(p_dyn_dim or kwargs.get("state_dim", 64))
+        self.d1r_stage = d1r_stage
+        self.lambda_delta = float(lambda_delta)
+        self.lambda_inv_r = float(lambda_inv_r)
+        self.lambda_sig = float(lambda_sig)
+        self.lambda_trend = float(lambda_trend)
+        self.lambda_inv_d = float(lambda_inv_d)
+        self.use_inv_d = bool(use_inv_d)
+
+        self.p_dyn = nn.Sequential(
+            nn.LayerNorm(self.predictor_embed.in_features // max(1, self.context_window)),
+            nn.Linear(self.predictor_embed.in_features // max(1, self.context_window), self.p_dyn_dim),
+            act_layer(),
+            nn.Linear(self.p_dyn_dim, self.p_dyn_dim),
+        )
+        self.d1r_state_fuse = nn.Sequential(
+            nn.LayerNorm(2 * self.p_dyn_dim),
+            nn.Linear(2 * self.p_dyn_dim, kwargs.get("state_dim", self.p_dyn_dim)),
+            act_layer(),
+        )
+        self.e_delta = nn.Sequential(
+            nn.LayerNorm(3 * self.p_dyn_dim),
+            nn.Linear(3 * self.p_dyn_dim, max(self.p_dyn_dim, self.r_h_dim)),
+            act_layer(),
+            nn.Linear(max(self.p_dyn_dim, self.r_h_dim), self.r_h_dim),
+        )
+        self.b_delta = nn.Linear(self.r_h_dim, self.p_dyn_dim)
+        self.q = nn.Sequential(nn.Linear(self.d_h_dim, self.r_h_dim), nn.LayerNorm(self.r_h_dim))
+        inv_in_dim = self.p_dyn_dim + self.r_h_dim
+        action_out_dim = self.predictor_total_embed_dim
+        self.d_inv_r = nn.Sequential(
+            nn.LayerNorm(inv_in_dim),
+            nn.Linear(inv_in_dim, max(inv_in_dim, action_out_dim)),
+            act_layer(),
+            nn.Linear(max(inv_in_dim, action_out_dim), action_out_dim),
+        )
+        self.d_inv_d = nn.Sequential(
+            nn.LayerNorm(inv_in_dim),
+            nn.Linear(inv_in_dim, max(inv_in_dim, action_out_dim)),
+            act_layer(),
+            nn.Linear(max(inv_in_dim, action_out_dim), action_out_dim),
+        )
+        self._d1r_aux_losses: dict[str, torch.Tensor] = {}
+        self._d1r_aux_replace_loss = False
+
+        self.apply(self._init_weights)
+        self.configure_d1r_stage(d1r_stage)
+        logger.info(
+            "Initialized D1RTrendPredictor("
+            f"stage={d1r_stage}, r_h_dim={self.r_h_dim}, p_dyn_dim={self.p_dyn_dim}, "
+            f"use_inv_d={self.use_inv_d})"
+        )
+
+    def configure_d1r_stage(self, stage: str) -> None:
+        if stage not in self.VALID_STAGES:
+            raise ValueError(f"Unsupported d1r_stage: {stage}")
+        self.d1r_stage = stage
+        for param in self.parameters():
+            param.requires_grad = False
+
+        def enable(module: nn.Module | None) -> None:
+            if module is None:
+                return
+            for param in module.parameters():
+                param.requires_grad = True
+
+        teacher_modules = [self.p_dyn, self.e_delta, self.b_delta, self.d_inv_r]
+        student_modules = [self.d1r_state_fuse, self.f_dyn, self.q, self.d_inv_d]
+        if hasattr(self, "dyn_in"):
+            student_modules.append(self.dyn_in)
+        if self.temporal_mixer is not None:
+            student_modules.append(self.temporal_mixer)
+        refiner_modules = [
+            self.predictor_embed,
+            self.guidance,
+            self.guidance_gate,
+            self.refine_in,
+            self.refiner,
+            self.refine_norm,
+            self.predictor_proj,
+            self.proprio_head,
+        ]
+
+        if stage == "implicit":
+            for module in [self.p_dyn, *student_modules, *refiner_modules]:
+                enable(module)
+        elif stage == "r1_teacher":
+            for module in teacher_modules:
+                enable(module)
+        elif stage == "r2_student":
+            for module in student_modules:
+                enable(module)
+        elif stage == "g_refine":
+            for module in refiner_modules:
+                enable(module)
+        elif stage == "oracle":
+            for module in [*teacher_modules, *refiner_modules]:
+                enable(module)
+
+    def _compact_state(self, x: torch.Tensor, proprio: torch.Tensor | None) -> torch.Tensor:
+        del proprio
+        y = self.p_dyn(x).mean(dim=(2, 3, 4))
+        if y.shape[1] > 1:
+            prev = torch.cat([y[:, :1], y[:, :-1]], dim=1)
+        else:
+            prev = y
+        return self.d1r_state_fuse(torch.cat([y, y - prev], dim=-1))
+
+    def _project_tokens(self, x: torch.Tensor) -> torch.Tensor:
+        # x: B T V H W D -> B T N P
+        y = self.p_dyn(x)
+        return y.flatten(2, 4)
+
+    def _teacher_trend(
+        self,
+        source: torch.Tensor,
+        target: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        y_source = self._project_tokens(source)
+        y_target = self._project_tokens(target)
+        source_pool = y_source.mean(dim=2)
+        target_pool = y_target.mean(dim=2)
+        delta_y = target_pool - source_pool
+        r_h = self.e_delta(torch.cat([source_pool, target_pool, delta_y], dim=-1))
+        return r_h, delta_y, source_pool
+
+    def _sigreg_loss(self, x: torch.Tensor) -> torch.Tensor:
+        flat = x.reshape(-1, x.shape[-1])
+        if flat.shape[0] < 2:
+            return flat.new_zeros(())
+        std = flat.std(dim=0)
+        return F.relu(1.0 - std).mean()
+
+    def _oracle_refine(self, source: torch.Tensor, r_h: torch.Tensor) -> torch.Tensor:
+        x_context = self._stack_context(source)
+        token_base = self.predictor_embed(x_context).flatten(2, 4)
+        B, T, N, _ = token_base.shape
+        guidance = self.guidance(r_h).unsqueeze(2)
+        gate = self.guidance_gate(r_h).unsqueeze(2)
+        coarse = token_base + gate * guidance
+        d_tokens = r_h.unsqueeze(2).expand(-1, -1, N, -1)
+        refined = self.refine_in(torch.cat([token_base, coarse, d_tokens], dim=-1))
+        refined = self.refiner(refined)
+        refined = self.refine_norm(refined)
+        return self.predictor_proj(refined)
+
+    def _compute_d1r_aux_losses(
+        self,
+        source: torch.Tensor,
+        target: torch.Tensor,
+        actions: torch.Tensor,
+    ) -> None:
+        if source.shape[1] < 2:
+            self._d1r_aux_losses = {}
+            self._d1r_aux_replace_loss = False
+            return
+        source = source[:, :-1]
+        target = target[:, 1:]
+        if actions.ndim == 4:
+            actions = actions.squeeze(2)
+        actions = actions[:, :-1].detach()
+
+        r_h, delta_y, source_pool = self._teacher_trend(source, target)
+        delta_hat = self.b_delta(r_h)
+        loss_delta = F.mse_loss(delta_hat, delta_y.detach())
+        inv_r = self.d_inv_r(torch.cat([source_pool, r_h], dim=-1))
+        loss_inv_r = F.mse_loss(inv_r, actions)
+        loss_sig = self._sigreg_loss(r_h)
+
+        losses: dict[str, torch.Tensor] = {
+            "d1r/loss_delta": loss_delta,
+            "d1r/loss_inv_r": loss_inv_r,
+            "d1r/loss_sigreg": loss_sig,
+        }
+        teacher_total = (
+            self.lambda_delta * loss_delta
+            + self.lambda_inv_r * loss_inv_r
+            + self.lambda_sig * loss_sig
+        )
+
+        d_h = getattr(self, "_last_d_h", None)
+        if d_h is not None:
+            d_h = d_h[:, :-1]
+            q_d = self.q(d_h)
+            loss_trend = F.mse_loss(q_d, r_h.detach())
+            inv_d = self.d_inv_d(torch.cat([source_pool.detach(), d_h], dim=-1))
+            loss_inv_d = F.mse_loss(inv_d, actions)
+            losses["d1r/loss_trend"] = loss_trend
+            losses["d1r/loss_inv_d"] = loss_inv_d
+        else:
+            loss_trend = source.new_zeros(())
+            loss_inv_d = source.new_zeros(())
+
+        if self.d1r_stage == "r1_teacher":
+            losses["d1r/loss_total"] = teacher_total
+            self._d1r_aux_replace_loss = True
+        elif self.d1r_stage == "r2_student":
+            total = self.lambda_trend * loss_trend
+            if self.use_inv_d:
+                total = total + self.lambda_inv_d * loss_inv_d
+            losses["d1r/loss_total"] = total
+            self._d1r_aux_replace_loss = True
+        elif self.d1r_stage == "oracle":
+            oracle_pred = self._oracle_refine(source, r_h.detach())
+            oracle_target = target.flatten(2, 4).detach()
+            loss_oracle = F.mse_loss(oracle_pred, oracle_target)
+            losses["d1r/loss_oracle_pred"] = loss_oracle
+            losses["d1r/loss_total"] = loss_oracle + teacher_total
+            self._d1r_aux_replace_loss = True
+        else:
+            self._d1r_aux_replace_loss = False
+
+        with torch.no_grad():
+            flat_r = r_h.detach().reshape(-1, r_h.shape[-1])
+            flat_d = d_h.detach().reshape(-1, d_h.shape[-1]) if d_h is not None else None
+            self.last_aux_stats.update(
+                {
+                    "d1r/r_h_std": float(flat_r.std(dim=0).median().cpu()),
+                    "d1r/r_h_norm": float(flat_r.norm(dim=-1).mean().cpu()),
+                    "d1r/lambda_delta": self.lambda_delta,
+                    "d1r/stage": self.d1r_stage,
+                }
+            )
+            if flat_d is not None:
+                self.last_aux_stats["d1r/d_h_norm"] = float(flat_d.norm(dim=-1).mean().cpu())
+
+        self._d1r_aux_losses = losses
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        actions: torch.Tensor,
+        proprio: torch.Tensor | None = None,
+        future_video_features: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, None, torch.Tensor | None]:
+        pred, action_features, pred_proprio = super().forward(x, actions, proprio)
+        if future_video_features is not None:
+            self._compute_d1r_aux_losses(x, future_video_features, actions)
+        else:
+            self._d1r_aux_losses = {}
+            self._d1r_aux_replace_loss = False
+        return pred, action_features, pred_proprio
+
+    def get_d1r_aux_losses(self) -> tuple[dict[str, torch.Tensor], bool]:
+        return self._d1r_aux_losses, self._d1r_aux_replace_loss
+
+    def estimate_inference_path_params(self) -> int:
+        modules = [
+            self.p_dyn,
+            self.d1r_state_fuse,
+            self.f_dyn,
+            self.predictor_embed,
+            self.guidance,
+            self.guidance_gate,
+            self.refine_in,
+            self.refiner,
+            self.refine_norm,
+            self.predictor_proj,
+        ]
+        if hasattr(self, "dyn_in"):
+            modules.append(self.dyn_in)
+        if self.temporal_mixer is not None:
+            modules.append(self.temporal_mixer)
+        return int(sum(p.numel() for module in modules for p in module.parameters()))
+
+
+def vit_predictor_mgvt_d1r(**kwargs):
+    kwargs.setdefault("d_h_dim", kwargs.get("r_h_dim", 64))
+    kwargs.setdefault("state_dim", kwargs.get("p_dyn_dim", 64))
+    return D1RTrendPredictor(norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)

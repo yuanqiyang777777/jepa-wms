@@ -2,8 +2,10 @@ import pytest
 import torch
 
 from app.plan_common.models.mgvt_dynamics_guided import (
+    D1RTrendPredictor,
     DynamicsGuidedPredictor,
     TemporalMambaOrGRU,
+    vit_predictor_mgvt_d1r,
     vit_predictor_mgvt_d_gru,
     vit_predictor_mgvt_d_mamba,
     vit_predictor_mgvt_d_mlp,
@@ -249,3 +251,111 @@ def test_init_video_model_forwards_d1_specific_kwargs():
     assert predictor.fdyn_type == "mamba"
     assert predictor.guidance_mode == "trend"
     assert predictor.temporal_mixer.require_cuda_mamba is True
+
+
+D1R_KWARGS = {
+    **PREDICTOR_KWARGS,
+    "use_proprio": False,
+    "proprio_emb_dim": 0,
+    "proprio_tokens": 0,
+    "d_h_dim": 64,
+    "r_h_dim": 64,
+    "state_dim": 64,
+    "p_dyn_dim": 64,
+    "proprio_flow": "no_proprio",
+}
+
+
+def _d1r_batch():
+    x = torch.randn(2, 3, 1, 16, 16, 384)
+    future = x + 0.1 * torch.randn_like(x)
+    actions = torch.randn(2, 3, 1, 64)
+    return x, future, actions
+
+
+def test_d1r_r1_teacher_stage_replaces_base_loss_and_freezes_deployable_path():
+    predictor = vit_predictor_mgvt_d1r(**{**D1R_KWARGS, "d1r_stage": "r1_teacher"})
+    x, future, actions = _d1r_batch()
+
+    pred, _action_features, pred_proprio = predictor(x, actions, None, future_video_features=future)
+    aux, replace = predictor.get_d1r_aux_losses()
+    aux["d1r/loss_total"].backward()
+
+    assert isinstance(predictor, D1RTrendPredictor)
+    assert pred.shape == (2, 3, 16 * 16, 384)
+    assert pred_proprio is None
+    assert replace is True
+    assert {"d1r/loss_delta", "d1r/loss_inv_r", "d1r/loss_sigreg", "d1r/loss_total"}.issubset(aux)
+    assert any(p.requires_grad for p in predictor.p_dyn.parameters())
+    assert not any(p.requires_grad for p in predictor.f_dyn.parameters())
+
+
+def test_d1r_future_blind_prediction_sentinel():
+    predictor = vit_predictor_mgvt_d1r(**{**D1R_KWARGS, "d1r_stage": "g_refine"})
+    x, future, actions = _d1r_batch()
+
+    pred_a = predictor(x, actions, None, future_video_features=future)[0]
+    pred_b = predictor(x, actions, None, future_video_features=future + 1000.0)[0]
+
+    assert torch.allclose(pred_a, pred_b)
+
+
+def test_d1r_r2_student_stage_uses_trend_loss_and_optional_inverse_loss():
+    predictor = vit_predictor_mgvt_d1r(**{**D1R_KWARGS, "d1r_stage": "r2_student", "use_inv_d": True})
+    x, future, actions = _d1r_batch()
+
+    predictor(x, actions, None, future_video_features=future)
+    aux, replace = predictor.get_d1r_aux_losses()
+    aux["d1r/loss_total"].backward()
+
+    assert replace is True
+    assert aux["d1r/loss_trend"].item() >= 0.0
+    assert aux["d1r/loss_inv_d"].item() >= 0.0
+    assert not any(p.requires_grad for p in predictor.p_dyn.parameters())
+    assert any(p.requires_grad for p in predictor.f_dyn.parameters())
+
+
+def test_d1r_inference_path_param_count_excludes_training_only_heads():
+    predictor = vit_predictor_mgvt_d1r(**{**D1R_KWARGS, "d1r_stage": "g_refine"})
+    inference_params = predictor.estimate_inference_path_params()
+    total_params = sum(p.numel() for p in predictor.parameters())
+
+    assert 0 < inference_params < total_params
+
+
+def test_init_video_model_builds_d1r_pred_type():
+    predictor, _encoder, action_encoder, proprio_encoder = init_video_model(
+        device=torch.device("cpu"),
+        enc_type="dino",
+        enc_version="dinov2_vits14",
+        img_size=224,
+        embed_dim=384,
+        pred_embed_dim=64,
+        pred_depth=1,
+        pred_num_heads=4,
+        pred_type="mgvt_d1r",
+        num_frames_pred=3,
+        tubelet_size=1,
+        action_dim=7,
+        action_conditioning="token",
+        action_tokens=1,
+        action_encoder_inpred=False,
+        proprio_dim=7,
+        use_proprio=False,
+        proprio_tokens=0,
+        proprio_emb_dim=0,
+        proprio_encoder_inpred=False,
+        init_scale_factor_adaln=0,
+        use_rope=False,
+        cfgs_attn_pattern={"local_window_time": -1, "local_window_h": -1, "local_window_w": -1},
+        d_h_dim=64,
+        r_h_dim=64,
+        state_dim=64,
+        p_dyn_dim=64,
+        d1r_stage="oracle",
+    )
+
+    assert isinstance(predictor, D1RTrendPredictor)
+    assert predictor.d1r_stage == "oracle"
+    assert action_encoder is not None
+    assert proprio_encoder is None

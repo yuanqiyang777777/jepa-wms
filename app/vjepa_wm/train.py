@@ -625,6 +625,8 @@ def main(args, resume_preempt=False):
             train_heads=train_heads,
             train_predictor=train_predictor,
         )
+        if cfgs_meta.get("reset_epoch_on_pretrained_load", False):
+            start_epoch = 0
         # Only resume the schedulers if we resume a pretraining or a finetuning
         # Not if we start a finetuning: we reset them
         if load_opt_scale_epoch and scheduler is not None and wd_scheduler is not None:
@@ -891,6 +893,7 @@ def main(args, resume_preempt=False):
                                     video_features,
                                     action_features,
                                     proprio_features,
+                                    future_video_features=video_features,
                                 )
                             )
                             predictor_losses = world_model.compute_loss(

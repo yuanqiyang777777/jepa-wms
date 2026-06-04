@@ -301,6 +301,7 @@ class VideoWM(nn.Module):
         proprio_features,
         ctxt_window=None,
         debug=False,
+        future_video_features=None,
     ):
         """
         Forward pass through the predictor.
@@ -361,11 +362,16 @@ class VideoWM(nn.Module):
             "mgvt_d_gru",
             "mgvt_d_mamba",
             "mgvt_d_sparse_control",
+            "mgvt_d1r",
         }:
+            predictor_kwargs = {}
+            if self.pred_type == "mgvt_d1r":
+                predictor_kwargs["future_video_features"] = future_video_features
             pred_video_features, pred_action_features, pred_proprio_features = self.predictor(
                 video_features,
                 action_features,
                 proprio_features,
+                **predictor_kwargs,
             )
             pred_video_features = rearrange(
                 pred_video_features, "b t (v h w) d -> b t v h w d", h=self.grid_size, w=self.grid_size, v=1
@@ -375,7 +381,7 @@ class VideoWM(nn.Module):
                 "self.pred_type should be in ['dino_wm', 'vjepa2_ac', 'AdaLN', "
                 "'mgvt_mlp', 'mgvt_convmixer', 'mgvt_mamba', "
                 "'mgvt_d_raw_action', 'mgvt_d_mlp', 'mgvt_d_gru', "
-                "'mgvt_d_mamba', 'mgvt_d_sparse_control']"
+                "'mgvt_d_mamba', 'mgvt_d_sparse_control', 'mgvt_d1r']"
             )
         if self.normalize_reps:
             pred_video_features = F.layer_norm(pred_video_features, (pred_video_features.size(-1),))
@@ -500,6 +506,16 @@ class VideoWM(nn.Module):
                     "proprio_smooth_l1_loss": proprio_smooth_l1_loss.mean() if reduce_mean else proprio_smooth_l1_loss,
                 }
             )
+        predictor_module = getattr(self.predictor, "module", self.predictor)
+        if hasattr(predictor_module, "get_d1r_aux_losses"):
+            aux_losses, replace_loss = predictor_module.get_d1r_aux_losses()
+            if aux_losses:
+                aux_total = aux_losses.get("d1r/loss_total")
+                for key, value in aux_losses.items():
+                    out[key] = value.mean() if reduce_mean and isinstance(value, torch.Tensor) else value
+                if aux_total is not None:
+                    aux_total = aux_total.mean() if reduce_mean and isinstance(aux_total, torch.Tensor) else aux_total
+                    out["loss"] = aux_total if replace_loss else out["loss"] + aux_total
         return out
 
     def rollout(

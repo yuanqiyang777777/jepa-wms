@@ -117,6 +117,14 @@ def summarize_probe_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
         summary["task_id_accuracy"] = nearest_centroid_accuracy(bundle["d_h"], bundle["task_id"])
     if {"d_h", "positive_pairs", "negative_pairs"}.issubset(bundle):
         summary.update(cross_position_margin(bundle["d_h"], bundle["positive_pairs"], bundle["negative_pairs"]))
+    if {"action", "delta_y", "r_h"}.issubset(bundle):
+        action_r2 = ridge_r2(bundle["action"], bundle["delta_y"])
+        rh_joint_r2 = ridge_r2(np.concatenate([_as_2d(bundle["action"]), _as_2d(bundle["r_h"])], axis=1), bundle["delta_y"])
+        summary["action_residualized_delta_r2_r_h"] = rh_joint_r2 - action_r2
+    if {"action", "delta_y", "d_h"}.issubset(bundle):
+        action_r2 = ridge_r2(bundle["action"], bundle["delta_y"])
+        dh_joint_r2 = ridge_r2(np.concatenate([_as_2d(bundle["action"]), _as_2d(bundle["d_h"])], axis=1), bundle["delta_y"])
+        summary["action_residualized_delta_r2_d_h"] = dh_joint_r2 - action_r2
     return summary
 
 
@@ -139,6 +147,49 @@ def _summary_from_skill_json(path: Path) -> dict[str, Any]:
     }
 
 
+def _write_d1r_placeholder_files(output_dir: Path, summary: dict[str, Any]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    base = {
+        "probe_status": summary.get("probe_status", "skill-json-only"),
+        "source": summary.get("source"),
+        "model": summary.get("model"),
+        "task": summary.get("task"),
+        "seed": summary.get("seed"),
+        "moved_region_h4": summary.get("moved_region_h4"),
+    }
+    payloads = {
+        "trend_alignment.json": {**base, "q_dh_to_rh_mse": None, "q_dh_to_rh_cosine": None},
+        "inverse_readout.json": {**base, "r_h_to_action": None, "d_h_to_action": None},
+        "action_residualized_delta.json": {
+            **base,
+            "delta_r2_r_h": summary.get("action_residualized_delta_r2_r_h"),
+            "delta_r2_d_h": summary.get("action_residualized_delta_r2_d_h"),
+        },
+        "collapse_rank.json": {**base, "effective_rank_r_h": None, "effective_rank_d_h": None},
+        "leakage_probe.json": {
+            **base,
+            "future_z_r2": summary.get("future_z_r2"),
+            "absolute_region_accuracy": summary.get("absolute_region_accuracy"),
+            "task_id_accuracy": summary.get("task_id_accuracy"),
+        },
+        "cross_position_consistency.json": {
+            **base,
+            "cross_position_margin": summary.get("cross_position_margin"),
+        },
+        "dh_controls.json": {**base, "remove_delta": None, "shuffle_delta": None, "random_delta": None},
+        "params_flops.json": {
+            **base,
+            "param_count": None,
+            "inference_path_param_count": None,
+            "flops_per_forward_estimate": None,
+        },
+    }
+    if summary.get("model") == "mgvt_d1r" or "d1r" in str(output_dir).lower():
+        payloads["oracle_rh_score.json"] = {**base, "oracle_rh_moved_region_h4": summary.get("moved_region_h4")}
+    for name, payload in payloads.items():
+        (output_dir / name).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", default=None, help="NPZ file with frozen d_h/probe arrays.")
@@ -157,6 +208,7 @@ def main() -> None:
     output = Path(args.output).expanduser().resolve()
     if output.suffix.lower() != ".json":
         output.mkdir(parents=True, exist_ok=True)
+        _write_d1r_placeholder_files(output, summary)
         output = output / "mgvt_d1_probes.json"
     else:
         output.parent.mkdir(parents=True, exist_ok=True)

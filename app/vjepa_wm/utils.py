@@ -15,6 +15,7 @@ import src.models.vision_transformer_v2 as vit_v2_open
 from app.plan_common.models.AdaLN_vit import vit_predictor_AdaLN
 from app.plan_common.models.dino import DinoEncoder
 from app.plan_common.models.mgvt_dynamics_guided import (
+    vit_predictor_mgvt_d1r,
     vit_predictor_mgvt_d_gru,
     vit_predictor_mgvt_d_mamba,
     vit_predictor_mgvt_d_mlp,
@@ -804,6 +805,7 @@ def init_video_model(
         "mgvt_d_gru",
         "mgvt_d_mamba",
         "mgvt_d_sparse_control",
+        "mgvt_d1r",
     }:
         assert action_conditioning == "token"
         assert proprio_encoder_inpred == False
@@ -816,6 +818,7 @@ def init_video_model(
             "mgvt_d_gru": vit_predictor_mgvt_d_gru,
             "mgvt_d_mamba": vit_predictor_mgvt_d_mamba,
             "mgvt_d_sparse_control": vit_predictor_mgvt_d_sparse_control,
+            "mgvt_d1r": vit_predictor_mgvt_d1r,
         }
         mgvt_d_pred_types = {
             "mgvt_d_raw_action",
@@ -823,6 +826,7 @@ def init_video_model(
             "mgvt_d_gru",
             "mgvt_d_mamba",
             "mgvt_d_sparse_control",
+            "mgvt_d1r",
         }
         mgvt_d_kwarg_names = {
             "d_h_dim",
@@ -835,6 +839,15 @@ def init_video_model(
             "delta_p_dim",
             "refiner_depth",
             "sparse_top_frac",
+            "r_h_dim",
+            "p_dyn_dim",
+            "d1r_stage",
+            "lambda_delta",
+            "lambda_inv_r",
+            "lambda_sig",
+            "lambda_trend",
+            "lambda_inv_d",
+            "use_inv_d",
         }
         predictor_extra_kwargs = (
             {key: kwargs[key] for key in mgvt_d_kwarg_names if key in kwargs}
@@ -886,6 +899,7 @@ def init_video_model(
                     "mgvt_d_gru",
                     "mgvt_d_mamba",
                     "mgvt_d_sparse_control",
+                    "mgvt_d1r",
                 }
                 else embed_dim
             )
