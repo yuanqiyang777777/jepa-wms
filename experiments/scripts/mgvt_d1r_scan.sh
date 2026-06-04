@@ -14,6 +14,7 @@ RUN_ROOT="${RUN_ROOT:-$JEPAWM_LOGS/mgvt_d1r_oracle_sandwich_pusht_seed234_202606
 CKPT_ROOT="${CKPT_ROOT:-$JEPAWM_CKPT/mgvt_d1r_oracle_sandwich_pusht_seed234_20260604}"
 SKILL_DEVICE="${SKILL_DEVICE:-cuda:0}"
 SKILL_MAX_HORIZON="${SKILL_MAX_HORIZON:-4}"
+SKILL_BATCH_SIZE="${SKILL_BATCH_SIZE:-4}"
 QUICK_DEBUG="${QUICK_DEBUG:-0}"
 FORCE_RERUN="${FORCE_RERUN:-0}"
 VARIANT_FILTER="${VARIANT_FILTER:-}"
@@ -55,6 +56,7 @@ mkdir -p "$RUN_ROOT" "$CKPT_ROOT" "$RUN_ROOT/skill_scores" "$RUN_ROOT/probes" "$
   echo "variant_filter=$VARIANT_FILTER"
   echo "quick_debug=$QUICK_DEBUG"
   echo "skill_max_horizon=$SKILL_MAX_HORIZON"
+  echo "skill_batch_size=$SKILL_BATCH_SIZE"
 } | tee "$RUN_ROOT/scan_start.txt"
 
 make_config() {
@@ -209,12 +211,99 @@ score_final() {
     --checkpoint "$ckpt_dir/jepa-latest.pth.tar" \
     --device "$SKILL_DEVICE" \
     --num-workers 0 \
+    --batch-size "$SKILL_BATCH_SIZE" \
     --max-horizon "$SKILL_MAX_HORIZON" \
     --train-log-csv "$run_dir/log_r0.csv" \
     --output "$skill_dir"
   python -m app.vjepa_wm.diagnostics.mgvt_d1_probes \
     --skill-json "$skill_dir/skill_score.json" \
     --output "$probe_dir"
+}
+
+score_dh_controls() {
+  local variant="$1"
+  local stage="$2"
+  local run_id="20260604_mgvt_d1r_pusht_${variant}_${stage}_seed234"
+  local run_dir="$RUN_ROOT/$run_id"
+  local ckpt_dir="$CKPT_ROOT/$run_id"
+  local skill_dir="$RUN_ROOT/skill_scores/$run_id"
+  local probe_dir="$RUN_ROOT/probes/$run_id"
+  local controls_dir="$probe_dir/dh_control_scores"
+  local config_dir="$probe_dir/dh_control_configs"
+  mkdir -p "$controls_dir" "$config_dir"
+
+  for mode in remove shuffle random; do
+    local control_config="$config_dir/config_dh_${mode}.yaml"
+    local control_skill_dir="$controls_dir/$mode"
+    python - "$run_dir/config.yaml" "$control_config" "$mode" <<'PY'
+import sys
+from pathlib import Path
+
+from src.utils.yaml_utils import dump_yaml, load_yaml
+
+source_config, control_config, mode = sys.argv[1:4]
+cfg = load_yaml(source_config)
+cfg.setdefault("model", {}).setdefault("predictor", {})["dh_ablation"] = mode
+Path(control_config).parent.mkdir(parents=True, exist_ok=True)
+dump_yaml(cfg, control_config)
+PY
+    python -m app.vjepa_wm.diagnostics.skill_score \
+      --config "$control_config" \
+      --checkpoint "$ckpt_dir/jepa-latest.pth.tar" \
+      --device "$SKILL_DEVICE" \
+      --num-workers 0 \
+      --batch-size "$SKILL_BATCH_SIZE" \
+      --max-horizon "$SKILL_MAX_HORIZON" \
+      --train-log-csv "$run_dir/log_r0.csv" \
+      --output "$control_skill_dir"
+  done
+
+  python - "$skill_dir/skill_score.json" "$controls_dir" "$probe_dir/dh_controls.json" <<'PY'
+import json
+import math
+import sys
+from pathlib import Path
+
+intact_path = Path(sys.argv[1])
+controls_dir = Path(sys.argv[2])
+output_path = Path(sys.argv[3])
+horizon = "4"
+
+def load(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+def h4(data):
+    value = data.get("moved_region_change_skill_by_horizon", {}).get(horizon)
+    return float(value) if isinstance(value, (int, float)) and math.isfinite(float(value)) else None
+
+intact = load(intact_path)
+intact_value = h4(intact)
+payload = {
+    "probe_status": "rescored-checkpoint-dh-controls",
+    "source": str(intact_path.resolve()),
+    "model": intact.get("model"),
+    "task": intact.get("task"),
+    "seed": intact.get("seed"),
+    "horizon": int(horizon),
+    "moved_region_h4": intact_value,
+    "delta_semantics": "intact_moved_region_h4 - ablated_moved_region_h4; positive means the d_h control degraded performance",
+    "controls": {},
+}
+for mode in ("remove", "shuffle", "random"):
+    score_path = controls_dir / mode / "skill_score.json"
+    data = load(score_path)
+    value = h4(data)
+    delta = None if intact_value is None or value is None else intact_value - value
+    payload[f"{mode}_moved_region_h4"] = value
+    payload[f"{mode}_delta"] = delta
+    payload["controls"][mode] = {
+        "skill_json": str(score_path.resolve()),
+        "moved_region_h4": value,
+        "delta": delta,
+    }
+output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(json.dumps(payload, indent=2, sort_keys=True))
+PY
 }
 
 run_single() {
@@ -239,6 +328,7 @@ run_staged() {
   r2_ckpt="$LAST_CKPT"
   run_stage "$variant" "g_refine" "$r2_ckpt"
   score_final "$variant" "g_refine"
+  score_dh_controls "$variant" "g_refine"
 }
 
 run_single "c1_adaln_param_match" "train"

@@ -157,12 +157,23 @@ def _count_predictor_params(model) -> int:
     return int(sum(p.numel() for module in modules for p in module.parameters()))
 
 
+def _count_predictor_module_params(model) -> int:
+    predictor = getattr(model.model.predictor, "module", model.model.predictor)
+    return int(sum(p.numel() for p in predictor.parameters()))
+
+
 def _count_inference_path_params(model) -> int | None:
     predictor = getattr(model.model.predictor, "module", model.model.predictor)
     estimator = getattr(predictor, "estimate_inference_path_params", None)
     if estimator is None:
         return None
     return int(estimator())
+
+
+def _count_training_only_params(model, inference_path_param_count: int | None) -> int | None:
+    if inference_path_param_count is None:
+        return None
+    return int(_count_predictor_module_params(model) - inference_path_param_count)
 
 
 def _count_linear_flops(module: nn.Module, token_count: int, excluded: set[int] | None = None) -> int:
@@ -638,6 +649,8 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
     h1 = "1"
 
     train_log_csv = _as_path(args.train_log_csv)
+    param_count = _count_predictor_params(model)
+    inference_path_param_count = _count_inference_path_params(model)
     results = {
         "model": model_name,
         "task": task,
@@ -682,8 +695,9 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
         "proprio_mse_model_by_horizon": proprio_metrics["proprio_mse_model"],
         "proprio_mse_persist_by_horizon": proprio_metrics["proprio_mse_persist"],
         "proprio_skill_by_horizon": proprio_metrics["proprio_skill"],
-        "param_count": _count_predictor_params(model),
-        "inference_path_param_count": _count_inference_path_params(model),
+        "param_count": param_count,
+        "inference_path_param_count": inference_path_param_count,
+        "training_only_param_count": _count_training_only_params(model, inference_path_param_count),
         "flops_per_forward_estimate": _estimate_predictor_flops(
             model,
             batch_size=args.batch_size or 1,

@@ -34,6 +34,7 @@ def test_d1r_probe_cli_writes_required_placeholder_files(tmp_path, monkeypatch):
                 "change_skill_by_horizon": {"4": 0.3},
                 "param_count": 123,
                 "inference_path_param_count": 100,
+                "training_only_param_count": 23,
                 "flops_per_forward_estimate": 456,
                 "oracle_rh_eval": True,
             }
@@ -64,4 +65,5 @@ def test_d1r_probe_cli_writes_required_placeholder_files(tmp_path, monkeypatch):
     params = json.loads((output_dir / "params_flops.json").read_text(encoding="utf-8"))
     assert params["param_count"] == 123
     assert params["inference_path_param_count"] == 100
+    assert params["training_only_param_count"] == 23
     assert params["flops_per_forward_estimate"] == 456

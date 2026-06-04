@@ -835,6 +835,7 @@ def init_video_model(
             "context_window",
             "proprio_flow",
             "dh_ablation",
+            "dh_ablation_random_seed",
             "require_cuda_mamba",
             "delta_p_dim",
             "refiner_depth",

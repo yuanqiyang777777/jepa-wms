@@ -389,6 +389,9 @@ class VisionTransformerAdaLN(nn.Module):
         # then separate visual and proprio output after AdaLN blocks
         return x, None, proprio_features
 
+    def estimate_inference_path_params(self) -> int:
+        return int(sum(p.numel() for p in self.parameters()))
+
 
 def vit_predictor_AdaLN(**kwargs):
     model = VisionTransformerAdaLN(qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)

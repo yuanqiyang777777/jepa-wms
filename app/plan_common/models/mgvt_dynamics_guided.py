@@ -121,6 +121,7 @@ class DynamicsGuidedPredictor(nn.Module):
         context_window=2,
         proprio_flow="dyn_refine",
         dh_ablation="none",
+        dh_ablation_random_seed=1729,
         sparse_top_frac=0.25,
         require_cuda_mamba=False,
         delta_p_dim=None,
@@ -154,6 +155,7 @@ class DynamicsGuidedPredictor(nn.Module):
         self.guidance_mode = guidance_mode
         self.d_h_dim = int(d_h_dim)
         self.dh_ablation = dh_ablation
+        self.dh_ablation_random_seed = int(dh_ablation_random_seed)
         self.context_window = int(context_window)
         self.sparse_top_frac = float(sparse_top_frac)
         self.delta_p_dim = int(delta_p_dim or 0)
@@ -357,7 +359,10 @@ class DynamicsGuidedPredictor(nn.Module):
         elif self.dh_ablation == "shuffle":
             d_h = d_h.roll(shifts=1, dims=0) if d_h.shape[0] > 1 else d_h.flip(dims=[1])
         elif self.dh_ablation == "random":
-            d_h = torch.randn_like(d_h) * d_h.detach().std().clamp_min(1.0e-6) + d_h * 0.0
+            generator = torch.Generator(device=d_h.device)
+            generator.manual_seed(self.dh_ablation_random_seed)
+            noise = torch.randn(d_h.shape, device=d_h.device, dtype=d_h.dtype, generator=generator)
+            d_h = noise * d_h.detach().std().clamp_min(1.0e-6) + d_h * 0.0
         return d_h
 
     def _apply_sparse_control(self, refined: torch.Tensor, base: torch.Tensor, d_h: torch.Tensor) -> torch.Tensor:

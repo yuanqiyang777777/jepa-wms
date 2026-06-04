@@ -44,6 +44,7 @@ def _read_scores(skill_root: Path) -> list[dict[str, Any]]:
                     "proprio_skill": data.get("proprio_skill_by_horizon", {}).get(horizon),
                     "param_count": data.get("param_count"),
                     "inference_path_param_count": data.get("inference_path_param_count"),
+                    "training_only_param_count": data.get("training_only_param_count"),
                     "flops_per_forward_estimate": data.get("flops_per_forward_estimate"),
                     "train_step_time_ms": data.get("train_step_time_ms"),
                 }
@@ -75,8 +76,10 @@ def _write_md(rows: list[dict[str, Any]], path: Path) -> None:
         return "n/a" if not _finite(value) else f"{float(value):.{digits}f}"
 
     lines = [
-        "| Variant | Model | Skill@H4 | Change@H4 | Moved@H4 | Proprio@H4 | Params | Inference Params | FLOPs | Step ms |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "Parameter columns: Params = predictor plus external action/proprio encoders; Inference Params and Training-only Params are predictor-internal, so columns are not additive.",
+        "",
+        "| Variant | Model | Skill@H4 | Change@H4 | Moved@H4 | Proprio@H4 | Params | Inference Params | Training-only Params | FLOPs | Step ms |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
@@ -84,6 +87,7 @@ def _write_md(rows: list[dict[str, Any]], path: Path) -> None:
             f"{fmt(row['change_skill'])} | {fmt(row['moved_region_change_skill'])} | "
             f"{fmt(row['proprio_skill'])} | {row.get('param_count') or 'n/a'} | "
             f"{row.get('inference_path_param_count') or 'n/a'} | "
+            f"{row.get('training_only_param_count') if row.get('training_only_param_count') is not None else 'n/a'} | "
             f"{row.get('flops_per_forward_estimate') or 'n/a'} | {fmt(row.get('train_step_time_ms'), 2)} |"
         )
     path.parent.mkdir(parents=True, exist_ok=True)

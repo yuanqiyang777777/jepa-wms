@@ -1,6 +1,7 @@
 import pytest
 import torch
 
+from app.plan_common.models.AdaLN_vit import vit_predictor_AdaLN
 from app.plan_common.models.mgvt_dynamics_guided import (
     D1RTrendPredictor,
     DynamicsGuidedPredictor,
@@ -154,6 +155,18 @@ def test_remove_dh_ablation_changes_prediction():
     out_remove = remove(x, actions, proprio)[0]
 
     assert not torch.allclose(out_base, out_remove)
+
+
+def test_random_dh_ablation_is_deterministic_for_rescoring():
+    predictor = vit_predictor_mgvt_d_mlp(**{**PREDICTOR_KWARGS, "dh_ablation": "random"})
+    x = torch.randn(2, 3, 1, 16, 16, 384)
+    actions = torch.randn(2, 3, 1, predictor.predictor_total_embed_dim)
+    proprio = torch.randn(2, 3, 16 * 16, 16)
+
+    out_a = predictor(x, actions, proprio)[0]
+    out_b = predictor(x, actions, proprio)[0]
+
+    assert torch.allclose(out_a, out_b)
 
 
 def test_mamba_cuda_requirement_blocks_fallback():
@@ -363,6 +376,32 @@ def test_d1r_inference_path_param_count_excludes_training_only_heads():
     total_params = sum(p.numel() for p in predictor.parameters())
 
     assert 0 < inference_params < total_params
+
+
+def test_d1r_c1_adaln_inference_params_are_matched_within_five_percent():
+    target = vit_predictor_mgvt_d1r(
+        **{**D1R_KWARGS, "predictor_embed_dim": 128, "d1r_stage": "g_refine"}
+    ).estimate_inference_path_params()
+    c1_adaln = vit_predictor_AdaLN(
+        img_size=PREDICTOR_KWARGS["img_size"],
+        patch_size=PREDICTOR_KWARGS["patch_size"],
+        num_frames=PREDICTOR_KWARGS["num_frames"],
+        tubelet_size=PREDICTOR_KWARGS["tubelet_size"],
+        embed_dim=PREDICTOR_KWARGS["embed_dim"],
+        predictor_embed_dim=112,
+        depth=2,
+        num_heads=PREDICTOR_KWARGS["num_heads"],
+        action_dim=PREDICTOR_KWARGS["action_dim"],
+        proprio_dim=PREDICTOR_KWARGS["proprio_dim"],
+        use_proprio=False,
+        proprio_emb_dim=0,
+        proprio_tokens=0,
+        proprio_encoder_inpred=False,
+        action_encoder_inpred=False,
+        init_scale_factor_adaln=0,
+    )
+
+    assert abs(c1_adaln.estimate_inference_path_params() - target) / target <= 0.05
 
 
 def test_init_video_model_builds_d1r_pred_type():

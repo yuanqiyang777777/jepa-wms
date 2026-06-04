@@ -145,6 +145,7 @@ def _summary_from_skill_json(path: Path) -> dict[str, Any]:
         "change_skill_h4": data.get("change_skill_by_horizon", {}).get("4"),
         "param_count": data.get("param_count"),
         "inference_path_param_count": data.get("inference_path_param_count"),
+        "training_only_param_count": data.get("training_only_param_count"),
         "flops_per_forward_estimate": data.get("flops_per_forward_estimate"),
         "oracle_rh_eval": data.get("oracle_rh_eval", False),
         "probe_status": "skill-json-only",
@@ -185,6 +186,7 @@ def _write_d1r_placeholder_files(output_dir: Path, summary: dict[str, Any]) -> N
             **base,
             "param_count": summary.get("param_count"),
             "inference_path_param_count": summary.get("inference_path_param_count"),
+            "training_only_param_count": summary.get("training_only_param_count"),
             "flops_per_forward_estimate": summary.get("flops_per_forward_estimate"),
         },
     }

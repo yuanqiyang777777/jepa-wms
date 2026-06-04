@@ -25,6 +25,14 @@ def test_stage_d1r_configs_keep_oracle_sandwich_contract():
         assert predictor["d1r_stage_name"] == spec.stage
 
 
+def test_stage_d1r_c1_adaln_param_match_uses_frozen_width():
+    cfg = build_config(next(s for s in d1r_configs() if s.variant == "c1_adaln_param_match"))
+    predictor = cfg["model"]["predictor"]
+    assert predictor["pred_type"] == "AdaLN"
+    assert predictor["pred_embed_dim"] == 112
+    assert predictor["pred_depth"] == 2
+
+
 def test_stage_d1r_configs_do_not_include_forbidden_protocol_terms():
     paths = generate(dry_run=False)
     forbidden = ("cem", "planning", "h8", "stage-3", "stage3", "confidence", "num_pred: 8", "rollout_steps: 8")
@@ -67,3 +75,12 @@ def test_stage_d1r_launcher_resets_epoch_for_staged_weight_handoff():
     launcher = (OUT_DIR.parents[2] / "experiments" / "scripts" / "mgvt_d1r_scan.sh").read_text(encoding="utf-8")
     assert 'cfg["meta"]["load_opt_scale_epoch"] = False' in launcher
     assert 'cfg["meta"]["reset_epoch_on_pretrained_load"] = True' in launcher
+
+
+def test_stage_d1r_launcher_rescores_s1_s2_dh_controls_without_retraining():
+    launcher = (OUT_DIR.parents[2] / "experiments" / "scripts" / "mgvt_d1r_scan.sh").read_text(encoding="utf-8")
+    assert "score_dh_controls" in launcher
+    assert 'cfg.setdefault("model", {}).setdefault("predictor", {})["dh_ablation"] = mode' in launcher
+    assert "--checkpoint \"$ckpt_dir/jepa-latest.pth.tar\"" in launcher
+    assert "--batch-size \"$SKILL_BATCH_SIZE\"" in launcher
+    assert "delta_semantics" in launcher

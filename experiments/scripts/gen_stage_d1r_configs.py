@@ -81,7 +81,7 @@ def d1r_configs() -> tuple[D1RConfig, ...]:
             "c1_adaln_param_match",
             "train",
             "AdaLN",
-            {"pred_embed_dim": 128, "pred_depth": 2, "init_scale_factor_adaln": 0},
+            {"pred_embed_dim": 112, "pred_depth": 2, "init_scale_factor_adaln": 0},
         ),
         D1RConfig(
             "c2_raw_action_guidance",
