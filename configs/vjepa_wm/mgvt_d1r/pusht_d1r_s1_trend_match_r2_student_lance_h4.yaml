@@ -177,7 +177,7 @@ model:
     rollout_stop_gradient: true
     ctxt_window_train_rollout: 2
     do_parallel_rollout: false
-    do_sequential_rollout: true
+    do_sequential_rollout: false
     prepend_gt: false
     sampling_scheduler:
       type: linear

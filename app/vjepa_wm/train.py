@@ -911,7 +911,9 @@ def main(args, resume_preempt=False):
                     for key, value in getattr(predictor_module, "last_aux_stats", {}).items():
                         if isinstance(value, (int, float)):
                             total_stats[key] = value
-                    predictor_loss = predictor_losses.get("loss", 0.0) / (rollout_steps + 1)
+                    d1r_replace_loss = bool(getattr(predictor_module, "_d1r_aux_replace_loss", False))
+                    predictor_loss_denominator = 1 if d1r_replace_loss else (rollout_steps + 1)
+                    predictor_loss = predictor_losses.get("loss", 0.0) / predictor_loss_denominator
                     if train and train_predictor and predictor is not None:
                         total_transition_loss += predictor_loss
                     stats = defaultdict(list)
@@ -1018,7 +1020,7 @@ def main(args, resume_preempt=False):
                             }
                             total_stats.update(predictor_state_losses)
                     # 4. TRAIN PREDICTOR ON FURTHER AUTOREGRESSIVE ROLLOUT
-                    if rollout_steps > 1 and train and train_predictor:
+                    if rollout_steps > 1 and train and train_predictor and not d1r_replace_loss:
                         if do_sequential_rollout:
                             with torch.amp.autocast("cuda", dtype=dtype, enabled=mixed_precision):
                                 if train_rollout_prefixes == "random":

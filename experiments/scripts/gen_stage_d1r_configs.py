@@ -131,6 +131,10 @@ def _clear_forbidden_protocol(cfg: dict[str, Any]) -> None:
     cfg["meta"]["light_eval_freq"] = 999999
 
 
+def _uses_aux_replace_loss(spec: D1RConfig) -> bool:
+    return spec.pred_type == "mgvt_d1r" and spec.stage in {"r1_teacher", "r2_student", "oracle"}
+
+
 def build_config(spec: D1RConfig):
     cfg = deepcopy(_load(SOURCE))
     stem = _stem(spec)
@@ -144,6 +148,9 @@ def build_config(spec: D1RConfig):
     cfg.setdefault("data", {}).setdefault("custom", {})["num_pred"] = 4
     cfg.setdefault("model", {}).setdefault("rollout_cfg", {})["rollout_steps"] = 4
     cfg["model"]["rollout_cfg"]["ctxt_window_train_rollout"] = 2
+    if _uses_aux_replace_loss(spec):
+        cfg["model"]["rollout_cfg"]["do_sequential_rollout"] = False
+        cfg["model"]["rollout_cfg"]["do_parallel_rollout"] = False
     cfg["loss"]["proprio_loss"] = False
 
     cfg["model"]["proprio_encoder"]["proprio_emb_dim"] = 0

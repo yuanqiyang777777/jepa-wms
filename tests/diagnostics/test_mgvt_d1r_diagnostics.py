@@ -32,6 +32,10 @@ def test_d1r_probe_cli_writes_required_placeholder_files(tmp_path, monkeypatch):
                 "moved_region_change_skill_by_horizon": {"4": 0.25},
                 "skill_by_horizon": {"4": 0.5},
                 "change_skill_by_horizon": {"4": 0.3},
+                "param_count": 123,
+                "inference_path_param_count": 100,
+                "flops_per_forward_estimate": 456,
+                "oracle_rh_eval": True,
             }
         ),
         encoding="utf-8",
@@ -57,3 +61,7 @@ def test_d1r_probe_cli_writes_required_placeholder_files(tmp_path, monkeypatch):
         "oracle_rh_score.json",
     }
     assert required.issubset({p.name for p in output_dir.iterdir()})
+    params = json.loads((output_dir / "params_flops.json").read_text(encoding="utf-8"))
+    assert params["param_count"] == 123
+    assert params["inference_path_param_count"] == 100
+    assert params["flops_per_forward_estimate"] == 456

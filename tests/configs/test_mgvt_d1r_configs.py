@@ -52,6 +52,17 @@ def test_stage_d1r_s2_r2_enables_student_inverse_consistency():
     assert cfg["model"]["predictor"]["use_inv_d"] is True
 
 
+def test_stage_d1r_aux_replace_stages_disable_training_rollout():
+    for spec in d1r_configs():
+        cfg = build_config(spec)
+        rollout_cfg = cfg["model"]["rollout_cfg"]
+        if spec.pred_type == "mgvt_d1r" and spec.stage in {"r1_teacher", "r2_student", "oracle"}:
+            assert rollout_cfg["do_sequential_rollout"] is False
+            assert rollout_cfg["do_parallel_rollout"] is False
+        else:
+            assert rollout_cfg["do_sequential_rollout"] is True
+
+
 def test_stage_d1r_launcher_resets_epoch_for_staged_weight_handoff():
     launcher = (OUT_DIR.parents[2] / "experiments" / "scripts" / "mgvt_d1r_scan.sh").read_text(encoding="utf-8")
     assert 'cfg["meta"]["load_opt_scale_epoch"] = False' in launcher

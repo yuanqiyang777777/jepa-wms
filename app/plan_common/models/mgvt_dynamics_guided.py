@@ -584,11 +584,11 @@ class D1RTrendPredictor(DynamicsGuidedPredictor):
                 param.requires_grad = True
 
         teacher_modules = [self.p_dyn, self.e_delta, self.b_delta, self.d_inv_r]
-        student_modules = [self.d1r_state_fuse, self.f_dyn, self.q, self.d_inv_d]
+        student_core_modules = [self.d1r_state_fuse, self.f_dyn]
         if hasattr(self, "dyn_in"):
-            student_modules.append(self.dyn_in)
+            student_core_modules.append(self.dyn_in)
         if self.temporal_mixer is not None:
-            student_modules.append(self.temporal_mixer)
+            student_core_modules.append(self.temporal_mixer)
         refiner_modules = [
             self.predictor_embed,
             self.guidance,
@@ -601,14 +601,16 @@ class D1RTrendPredictor(DynamicsGuidedPredictor):
         ]
 
         if stage == "implicit":
-            for module in [self.p_dyn, *student_modules, *refiner_modules]:
+            for module in [self.p_dyn, *student_core_modules, *refiner_modules]:
                 enable(module)
         elif stage == "r1_teacher":
             for module in teacher_modules:
                 enable(module)
         elif stage == "r2_student":
-            for module in student_modules:
+            for module in [*student_core_modules, self.q]:
                 enable(module)
+            if self.use_inv_d:
+                enable(self.d_inv_d)
         elif stage == "g_refine":
             for module in refiner_modules:
                 enable(module)
@@ -650,8 +652,7 @@ class D1RTrendPredictor(DynamicsGuidedPredictor):
         std = flat.std(dim=0)
         return F.relu(1.0 - std).mean()
 
-    def _oracle_refine(self, source: torch.Tensor, r_h: torch.Tensor) -> torch.Tensor:
-        x_context = self._stack_context(source)
+    def _oracle_refine_from_context(self, x_context: torch.Tensor, r_h: torch.Tensor) -> torch.Tensor:
         token_base = self.predictor_embed(x_context).flatten(2, 4)
         B, T, N, _ = token_base.shape
         guidance = self.guidance(r_h).unsqueeze(2)
@@ -662,6 +663,23 @@ class D1RTrendPredictor(DynamicsGuidedPredictor):
         refined = self.refiner(refined)
         refined = self.refine_norm(refined)
         return self.predictor_proj(refined)
+
+    def _oracle_refine(self, source: torch.Tensor, r_h: torch.Tensor) -> torch.Tensor:
+        return self._oracle_refine_from_context(self._stack_context(source), r_h)
+
+    def oracle_predict(self, source_context: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Non-deployable oracle forecast for T0 diagnostics.
+
+        ``target`` is intentionally future-derived here.  This method is used
+        only for the registered oracle upper-bound score and is not reachable
+        from the deployable ``forward`` path.
+        """
+
+        source_last = source_context[:, -1:]
+        target_last = target[:, -1:]
+        r_h, _delta_y, _source_pool = self._teacher_trend(source_last, target_last)
+        x_context = self._stack_context(source_context)[:, -1:]
+        return self._oracle_refine_from_context(x_context, r_h.detach())
 
     def _compute_d1r_aux_losses(
         self,

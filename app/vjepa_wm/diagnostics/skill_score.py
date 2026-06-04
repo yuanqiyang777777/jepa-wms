@@ -443,6 +443,15 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
     model.eval()
 
     model_name = _nested_get(config, ["model", "predictor", "pred_type"], "unknown")
+    predictor_cfg = _nested_get(config, ["model", "predictor"], {})
+    predictor_module = getattr(model.model.predictor, "module", model.model.predictor)
+    oracle_predict = getattr(predictor_module, "oracle_predict", None)
+    use_oracle_rh_eval = (
+        model_name == "mgvt_d1r"
+        and isinstance(predictor_cfg, dict)
+        and predictor_cfg.get("d1r_stage") == "oracle"
+        and oracle_predict is not None
+    )
     task = ",".join(config["data"].get("datasets", []))
     filter_tasks = _nested_get(config, ["data", "custom", "filter_tasks"], None)
     if filter_tasks:
@@ -492,39 +501,54 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
             continue
 
         context_start = max(0, prefix - ctxt_window + 1)
-        pred_video_features, _pred_action_features, _pred_proprio_features = model.model.forward_pred(
-            video_features[:, context_start : prefix + 1],
-            action_features[:, context_start : prefix + 1],
-            proprio_features[:, context_start : prefix + 1] if proprio_features is not None else None,
-        )
-        pred_by_horizon = {
-            1: pred_video_features[:, -1:],
-        }
         pred_prop_by_horizon = {}
-        if _pred_proprio_features is not None:
-            pred_prop_by_horizon[1] = _pred_proprio_features[:, -1:]
-
-        vid_context = torch.cat([video_features[:, : prefix + 1], pred_by_horizon[1]], dim=1)
-        prop_context = None
-        if proprio_features is not None and 1 in pred_prop_by_horizon:
-            prop_context = torch.cat([proprio_features[:, : prefix + 1], pred_prop_by_horizon[1]], dim=1)
-        act_context = action_features[:, : prefix + 1]
-
-        for horizon in range(2, available_horizon + 1):
-            act_context = torch.cat(
-                [act_context, action_features[:, prefix + horizon - 1 : prefix + horizon]],
-                dim=1,
+        if use_oracle_rh_eval:
+            source_context = video_features[:, context_start : prefix + 1]
+            pred_by_horizon = {}
+            for horizon in range(1, available_horizon + 1):
+                target = video_features[:, prefix + horizon : prefix + horizon + 1]
+                pred_tokens = oracle_predict(source_context, target)
+                pred_by_horizon[horizon] = pred_tokens.reshape(
+                    pred_tokens.shape[0],
+                    1,
+                    1,
+                    model.model.grid_size,
+                    model.model.grid_size,
+                    pred_tokens.shape[-1],
+                )
+        else:
+            pred_video_features, _pred_action_features, _pred_proprio_features = model.model.forward_pred(
+                video_features[:, context_start : prefix + 1],
+                action_features[:, context_start : prefix + 1],
+                proprio_features[:, context_start : prefix + 1] if proprio_features is not None else None,
             )
-            next_vid_feats, _next_act_feats, next_prop_feats = model.model.forward_pred(
-                vid_context[:, -ctxt_window:].detach(),
-                act_context[:, -ctxt_window:],
-                prop_context[:, -ctxt_window:].detach() if prop_context is not None else None,
-            )
-            pred_by_horizon[horizon] = next_vid_feats[:, -1:]
-            vid_context = torch.cat([vid_context.detach(), pred_by_horizon[horizon]], dim=1)
-            if prop_context is not None and next_prop_feats is not None:
-                pred_prop_by_horizon[horizon] = next_prop_feats[:, -1:]
-                prop_context = torch.cat([prop_context.detach(), pred_prop_by_horizon[horizon]], dim=1)
+            pred_by_horizon = {
+                1: pred_video_features[:, -1:],
+            }
+            if _pred_proprio_features is not None:
+                pred_prop_by_horizon[1] = _pred_proprio_features[:, -1:]
+
+            vid_context = torch.cat([video_features[:, : prefix + 1], pred_by_horizon[1]], dim=1)
+            prop_context = None
+            if proprio_features is not None and 1 in pred_prop_by_horizon:
+                prop_context = torch.cat([proprio_features[:, : prefix + 1], pred_prop_by_horizon[1]], dim=1)
+            act_context = action_features[:, : prefix + 1]
+
+            for horizon in range(2, available_horizon + 1):
+                act_context = torch.cat(
+                    [act_context, action_features[:, prefix + horizon - 1 : prefix + horizon]],
+                    dim=1,
+                )
+                next_vid_feats, _next_act_feats, next_prop_feats = model.model.forward_pred(
+                    vid_context[:, -ctxt_window:].detach(),
+                    act_context[:, -ctxt_window:],
+                    prop_context[:, -ctxt_window:].detach() if prop_context is not None else None,
+                )
+                pred_by_horizon[horizon] = next_vid_feats[:, -1:]
+                vid_context = torch.cat([vid_context.detach(), pred_by_horizon[horizon]], dim=1)
+                if prop_context is not None and next_prop_feats is not None:
+                    pred_prop_by_horizon[horizon] = next_prop_feats[:, -1:]
+                    prop_context = torch.cat([prop_context.detach(), pred_prop_by_horizon[horizon]], dim=1)
 
         if device.type == "cuda":
             torch.cuda.synchronize(device)
@@ -666,6 +690,7 @@ def run_skill_score(args: argparse.Namespace) -> dict[str, Any]:
             seq_len=min_eval_frames,
         ),
         "mamba_backend": _mamba_backend(model),
+        "oracle_rh_eval": bool(use_oracle_rh_eval),
         "train_step_time_ms": _read_train_step_time_ms(train_log_csv),
         "diagnostic_batch_time_ms": float(sum(batch_times) / len(batch_times)),
         "latent_mean": float(sum(latent_means) / len(latent_means)),

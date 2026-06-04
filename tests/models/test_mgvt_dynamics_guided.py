@@ -300,6 +300,17 @@ def test_d1r_future_blind_prediction_sentinel():
     assert torch.allclose(pred_a, pred_b)
 
 
+def test_d1r_oracle_predict_is_explicitly_target_conditioned():
+    predictor = vit_predictor_mgvt_d1r(**{**D1R_KWARGS, "d1r_stage": "oracle"})
+    x, future, _actions = _d1r_batch()
+
+    oracle_a = predictor.oracle_predict(x[:, :2], future[:, 2:3])
+    oracle_b = predictor.oracle_predict(x[:, :2], future[:, 2:3] + 10.0)
+
+    assert oracle_a.shape == (2, 1, 16 * 16, 384)
+    assert not torch.allclose(oracle_a, oracle_b)
+
+
 def test_d1r_r2_student_stage_uses_trend_loss_and_optional_inverse_loss():
     predictor = vit_predictor_mgvt_d1r(**{**D1R_KWARGS, "d1r_stage": "r2_student", "use_inv_d": True})
     x, future, actions = _d1r_batch()
@@ -313,6 +324,37 @@ def test_d1r_r2_student_stage_uses_trend_loss_and_optional_inverse_loss():
     assert aux["d1r/loss_inv_d"].item() >= 0.0
     assert not any(p.requires_grad for p in predictor.p_dyn.parameters())
     assert any(p.requires_grad for p in predictor.f_dyn.parameters())
+
+
+@pytest.mark.parametrize(
+    ("stage", "use_inv_d", "uses_aux_replace_loss"),
+    [
+        ("implicit", False, False),
+        ("r1_teacher", False, True),
+        ("r2_student", False, True),
+        ("r2_student", True, True),
+        ("g_refine", False, False),
+        ("oracle", False, True),
+    ],
+)
+def test_d1r_stage_trainable_params_all_receive_grad(stage, use_inv_d, uses_aux_replace_loss):
+    predictor = vit_predictor_mgvt_d1r(
+        **{**D1R_KWARGS, "d1r_stage": stage, "use_inv_d": use_inv_d}
+    )
+    x, future, actions = _d1r_batch()
+
+    pred = predictor(x, actions, None, future_video_features=future)[0]
+    aux, replace = predictor.get_d1r_aux_losses()
+    loss = aux["d1r/loss_total"] if uses_aux_replace_loss else pred.square().mean()
+    loss.backward()
+
+    assert replace is uses_aux_replace_loss
+    missing = [
+        name
+        for name, param in predictor.named_parameters()
+        if param.requires_grad and param.grad is None
+    ]
+    assert missing == []
 
 
 def test_d1r_inference_path_param_count_excludes_training_only_heads():

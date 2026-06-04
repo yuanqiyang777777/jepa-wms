@@ -143,6 +143,10 @@ def _summary_from_skill_json(path: Path) -> dict[str, Any]:
         "moved_region_h4": data.get("moved_region_change_skill_by_horizon", {}).get("4"),
         "skill_h4": data.get("skill_by_horizon", {}).get("4"),
         "change_skill_h4": data.get("change_skill_by_horizon", {}).get("4"),
+        "param_count": data.get("param_count"),
+        "inference_path_param_count": data.get("inference_path_param_count"),
+        "flops_per_forward_estimate": data.get("flops_per_forward_estimate"),
+        "oracle_rh_eval": data.get("oracle_rh_eval", False),
         "probe_status": "skill-json-only",
     }
 
@@ -179,9 +183,9 @@ def _write_d1r_placeholder_files(output_dir: Path, summary: dict[str, Any]) -> N
         "dh_controls.json": {**base, "remove_delta": None, "shuffle_delta": None, "random_delta": None},
         "params_flops.json": {
             **base,
-            "param_count": None,
-            "inference_path_param_count": None,
-            "flops_per_forward_estimate": None,
+            "param_count": summary.get("param_count"),
+            "inference_path_param_count": summary.get("inference_path_param_count"),
+            "flops_per_forward_estimate": summary.get("flops_per_forward_estimate"),
         },
     }
     if summary.get("model") == "mgvt_d1r" or "d1r" in str(output_dir).lower():
