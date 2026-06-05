@@ -19,6 +19,8 @@ QUICK_DEBUG="${QUICK_DEBUG:-0}"
 FORCE_RERUN="${FORCE_RERUN:-0}"
 VARIANT_FILTER="${VARIANT_FILTER:-}"
 REQUIRE_LANCE_STORES="${REQUIRE_LANCE_STORES:-1}"
+TRAIN_NUM_WORKERS="${TRAIN_NUM_WORKERS:-}"
+TRAIN_PERSISTENT_WORKERS="${TRAIN_PERSISTENT_WORKERS:-}"
 
 DEVICES="${DEVICES//,/ }"
 read -r -a DEVICE_ARRAY <<< "$DEVICES"
@@ -57,6 +59,8 @@ mkdir -p "$RUN_ROOT" "$CKPT_ROOT" "$RUN_ROOT/skill_scores" "$RUN_ROOT/probes" "$
   echo "quick_debug=$QUICK_DEBUG"
   echo "skill_max_horizon=$SKILL_MAX_HORIZON"
   echo "skill_batch_size=$SKILL_BATCH_SIZE"
+  echo "train_num_workers=${TRAIN_NUM_WORKERS:-config-default}"
+  echo "train_persistent_workers=${TRAIN_PERSISTENT_WORKERS:-config-default}"
 } | tee "$RUN_ROOT/scan_start.txt"
 
 make_config() {
@@ -67,13 +71,13 @@ make_config() {
   local seed="$5"
   local pretrained="$6"
 
-  python - "$base_config" "$config_path" "$run_dir" "$ckpt_dir" "$seed" "$QUICK_DEBUG" "$WORLD_SIZE" "$pretrained" <<'PY'
+  python - "$base_config" "$config_path" "$run_dir" "$ckpt_dir" "$seed" "$QUICK_DEBUG" "$WORLD_SIZE" "$pretrained" "$TRAIN_NUM_WORKERS" "$TRAIN_PERSISTENT_WORKERS" <<'PY'
 import sys
 from pathlib import Path
 
 from src.utils.yaml_utils import dump_yaml, load_yaml
 
-base_config, config_path, run_dir, ckpt_dir, seed, quick_debug, world_size, pretrained = sys.argv[1:9]
+base_config, config_path, run_dir, ckpt_dir, seed, quick_debug, world_size, pretrained, train_num_workers, train_persistent_workers = sys.argv[1:11]
 cfg = load_yaml(base_config)
 seed = int(seed)
 
@@ -85,6 +89,14 @@ cfg.setdefault("data", {})["seed"] = seed
 cfg.setdefault("logging", {}).setdefault("wandb", {})["use_wandb"] = False
 cfg["evals"] = None
 cfg["unroll_decode_evals"] = None
+loader = cfg.setdefault("data", {}).setdefault("loader", {})
+if train_num_workers:
+    loader["num_workers"] = int(train_num_workers)
+if train_persistent_workers:
+    value = train_persistent_workers.strip().lower()
+    if value not in {"0", "1", "false", "true", "no", "yes"}:
+        raise ValueError(f"TRAIN_PERSISTENT_WORKERS must be boolean-like, got {train_persistent_workers!r}")
+    loader["persistent_workers"] = value in {"1", "true", "yes"}
 if pretrained:
     cfg["meta"]["pretrained_path"] = pretrained
     cfg["meta"]["load_checkpoint"] = True
@@ -109,42 +121,133 @@ health_check() {
 
   python - "$run_dir" "$ckpt_dir" "$cmd_status" <<'PY'
 import csv
+import json
 import math
+import re
 import sys
 from pathlib import Path
+
+from src.utils.yaml_utils import load_yaml
 
 run_dir = Path(sys.argv[1])
 ckpt_dir = Path(sys.argv[2])
 cmd_status = int(sys.argv[3])
 errors = []
+warnings = []
 latest_ckpt = ckpt_dir / "jepa-latest.pth.tar"
 train_csv = run_dir / "log_r0.csv"
 launch_log = run_dir / "launch.log"
+config_path = run_dir / "config.yaml"
+health_path = run_dir / "health_check.json"
+payload = {
+    "cmd_status": cmd_status,
+    "latest_checkpoint": str(latest_ckpt),
+    "train_csv": str(train_csv),
+    "launch_log": str(launch_log),
+    "config": str(config_path),
+    "known_loader_shutdown_warning": False,
+    "errors": errors,
+    "warnings": warnings,
+}
 
 if cmd_status != 0:
     errors.append(f"app.main command exited non-zero: {cmd_status}")
 if not latest_ckpt.exists():
     errors.append(f"missing checkpoint: {latest_ckpt}")
+if not config_path.exists():
+    errors.append(f"missing config: {config_path}")
+else:
+    cfg = load_yaml(str(config_path))
+    opt = cfg.get("optimization", {}).get("transition_model", {})
+    payload["expected_num_epochs"] = int(opt.get("num_epochs", 0) or 0)
+    payload["expected_iterations_per_epoch"] = int(opt.get("iterations_per_epoch", 0) or 0)
 if not train_csv.exists():
     errors.append(f"missing train csv: {train_csv}")
 else:
-    rows = list(csv.DictReader(train_csv.open(newline="")))
-    losses = [float(row["loss"]) for row in rows if row.get("loss")]
-    if not losses or not all(math.isfinite(v) for v in losses):
+    with train_csv.open(newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    payload["train_csv_rows"] = len(rows)
+    losses = []
+    last_epoch = None
+    last_itr = None
+    for row in rows:
+        try:
+            last_epoch = int(row.get("epoch", ""))
+            last_itr = int(row.get("itr", ""))
+        except ValueError:
+            errors.append(f"non-integer epoch/itr in train csv row: {row!r}")
+            break
+        raw_loss = row.get("loss")
+        if raw_loss not in ("", None):
+            try:
+                losses.append(float(raw_loss))
+            except ValueError:
+                errors.append(f"non-numeric loss value: {raw_loss!r}")
+                break
+    payload["last_epoch"] = last_epoch
+    payload["last_itr"] = last_itr
+    payload["loss_count"] = len(losses)
+    if not rows:
+        errors.append(f"train csv has no data rows: {train_csv}")
+    elif not losses or not all(math.isfinite(v) for v in losses):
         errors.append("train csv has no finite loss values")
+    else:
+        expected_epochs = int(payload.get("expected_num_epochs", 0) or 0)
+        expected_ipe = int(payload.get("expected_iterations_per_epoch", 0) or 0)
+        if expected_epochs > 0 and last_epoch is not None and last_epoch < expected_epochs:
+            errors.append(f"train csv incomplete: last_epoch={last_epoch}, expected={expected_epochs}")
+        if expected_ipe > 0 and last_itr is not None and last_itr < expected_ipe - 1:
+            errors.append(f"train csv incomplete: last_itr={last_itr}, expected_at_least={expected_ipe - 1}")
 if not launch_log.exists():
     errors.append(f"missing launch log: {launch_log}")
 else:
     text = launch_log.read_text(errors="replace").lower()
-    for marker in ("traceback", "runtimeerror", "out of memory", "cuda error", "nan"):
+    for marker in ("out of memory", "cuda error"):
         if marker in text:
             errors.append(f"launch.log contains {marker!r}")
+    if re.search(r"(^|[^a-z])nan([^a-z]|$)", text):
+        errors.append("launch.log contains 'nan'")
+    has_traceback = "traceback" in text
+    has_runtimeerror = "runtimeerror" in text
+    traceback_count = text.count("traceback (most recent call last):")
+    loader_finalizer_count = text.count("exception ignored in: <function _multiprocessingdataloaderiter.__del__")
+    extra_tracebacks = max(0, traceback_count - loader_finalizer_count)
+    payload["traceback_count"] = traceback_count
+    payload["loader_finalizer_count"] = loader_finalizer_count
+    payload["extra_tracebacks"] = extra_tracebacks
+    unexpected_runtime_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if "runtimeerror" in line
+        and not ("dataloader worker" in line and "is killed by signal: aborted" in line)
+    ]
+    known_loader_shutdown = (
+        loader_finalizer_count > 0
+        and "dataloader worker" in text
+        and "is killed by signal: aborted" in text
+        and extra_tracebacks == 0
+        and not unexpected_runtime_lines
+    )
+    if known_loader_shutdown and cmd_status == 0:
+        payload["known_loader_shutdown_warning"] = True
+        warnings.append("known DataLoader teardown/finalizer warning detected after training")
+    if (has_traceback or has_runtimeerror) and not payload["known_loader_shutdown_warning"]:
+        errors.append("launch.log contains unexpected traceback/runtimeerror")
+    if extra_tracebacks:
+        errors.append(f"launch.log contains {extra_tracebacks} traceback(s) not explained by DataLoader finalizer")
+    if unexpected_runtime_lines:
+        errors.append(f"launch.log contains unexpected RuntimeError lines: {unexpected_runtime_lines[:3]}")
 if errors:
     print("Training health check failed:", file=sys.stderr)
     for error in errors:
         print(f"  - {error}", file=sys.stderr)
+    health_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     raise SystemExit(1)
-print("Training health check passed")
+health_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+if payload["known_loader_shutdown_warning"]:
+    print("Training health check passed; known_loader_shutdown_warning=true")
+else:
+    print("Training health check passed; known_loader_shutdown_warning=false")
 PY
 }
 

@@ -77,6 +77,14 @@ def test_stage_d1r_launcher_resets_epoch_for_staged_weight_handoff():
     assert 'cfg["meta"]["reset_epoch_on_pretrained_load"] = True' in launcher
 
 
+def test_stage_d1r_launcher_exposes_diagnostic_worker_overrides_without_changing_defaults():
+    launcher = (OUT_DIR.parents[2] / "experiments" / "scripts" / "mgvt_d1r_scan.sh").read_text(encoding="utf-8")
+    assert 'TRAIN_NUM_WORKERS="${TRAIN_NUM_WORKERS:-}"' in launcher
+    assert 'TRAIN_PERSISTENT_WORKERS="${TRAIN_PERSISTENT_WORKERS:-}"' in launcher
+    assert 'loader["num_workers"] = int(train_num_workers)' in launcher
+    assert 'loader["persistent_workers"] = value in {"1", "true", "yes"}' in launcher
+
+
 def test_stage_d1r_launcher_rescores_s1_s2_dh_controls_without_retraining():
     launcher = (OUT_DIR.parents[2] / "experiments" / "scripts" / "mgvt_d1r_scan.sh").read_text(encoding="utf-8")
     assert "score_dh_controls" in launcher
