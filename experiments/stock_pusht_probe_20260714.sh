@@ -6,7 +6,7 @@ umask 077
 # Immutable experiment identity.
 BASE=/home/ps/Code/yqy/DINO-WM/stablewm_home
 CODE=/home/ps/Code/yqy/DINO-WM
-RUN_ID=stock_pusht_probe_20260714
+RUN_ID=stock_pusht_probe_20260714_retry1
 ROOT="$BASE/$RUN_ID"
 SOURCE_JEPA="$CODE/jepa-wms"
 SOURCE_STABLE="$CODE/stable-worldmodel"
@@ -34,7 +34,7 @@ EXPECTED_MANIFEST=7673dc4389b5cb0e9b4eb2082b3fbb1152c8307b790380eefdeee3c451c37c
 EXPECTED_ENV_SOURCE=3c4df51ed01ed034386c24961caa638f02b5c0e31c88fec727a9f1cd5808e203
 EXPECTED_BASELINE_SHA256=9017654b0b159521dbd93e274e8dbd1e37cfcdfc3aa66eaaee59530883a328e5
 # Review identity only.  The analyzer is local-only and is never copied to lab01.
-EXPECTED_ANALYZER_SHA256=5b2641804ec28509659608ee22a74b3c9f49a6bddf46bbf525b3258ef0e5ffda
+EXPECTED_ANALYZER_SHA256=240b51e48e0cdaa5285e697a71e7e15d1898a28a5cdc087ee622e5b9c12f8df0
 
 DATASET="$BASE/datasets/pusht_expert_train.h5"
 CELLS=(
