@@ -6,7 +6,7 @@ umask 077
 # Immutable experiment identity.
 BASE=/home/ps/Code/yqy/DINO-WM/stablewm_home
 CODE=/home/ps/Code/yqy/DINO-WM
-RUN_ID=stock_tworoom_probe_20260713
+RUN_ID=stock_tworoom_probe_20260713_retry1
 ROOT="$BASE/$RUN_ID"
 SOURCE_JEPA="$CODE/jepa-wms"
 SOURCE_STABLE="$CODE/stable-worldmodel"
@@ -31,10 +31,10 @@ EXPECTED_PROBE=564d7469840a38bf6015149d9d61191694beef9e0f5ed6610c5db9934b7dbdc8
 EXPECTED_COMMON=9c57a82343277e3378f24df8ca38e5f9a4dcc53a4fead909e2a6126001d1a89c
 EXPECTED_BUDGET=cefd2b267601377aa1201a5302828807f4189ca11f123c1128746938f51dfd8f
 EXPECTED_MANIFEST=ffffb1ae170ec45db59a7b155890ef868e145a30e112a580e99bfc14bf4987ad
-EXPECTED_ENV_SOURCE=761e70901840acacc7a74676a3ed128715bfe3941241c8d56403ae5f7c9a2124
+EXPECTED_ENV_SOURCE=5e1d392de5b02472062dbe872aded67fd465fcc8f7eaa1c02a753b2fc31c61f0
 EXPECTED_BASELINE_SHA256=474065cefd579152dc670cbcc5896d7d97790b887e1ee93946c3d2bfd48c0640
 # Review identity only.  The analyzer is local-only and is never copied to lab01.
-EXPECTED_ANALYZER_SHA256=3b6f852ec3c871d8d4dbab38c47fe5063ea225e012300c86d85bf74a2149fa5e
+EXPECTED_ANALYZER_SHA256=0fb5063db36d7439fc92004fbc9f60c29e98b00da00691ab72c66ba8a5d03320
 
 DATASET="$BASE/datasets/tworoom.h5"
 CELLS=(
@@ -861,7 +861,7 @@ attestation = root / f"{phase}_validation_attestation.json"
 if not runtime.is_file() or not attestation.is_file():
     raise SystemExit(f"{phase} runtime validation/attestation is absent")
 expected = {
-    "run_id": "stock_tworoom_probe_20260713",
+    "run_id": root.name,
     "state": f"{phase.upper()}_VALIDATION_ATTESTED",
     "runtime_validation_sha256": sha(runtime),
     "cache_validated_sha256": sha(root / "cache_validated.json"),

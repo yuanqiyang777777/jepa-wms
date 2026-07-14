@@ -35,7 +35,7 @@ from typing import Any, Iterable
 import numpy as np
 
 
-RUN_ID = "stock_tworoom_probe_20260713"
+RUN_ID = "stock_tworoom_probe_20260713_retry1"
 TASK = "tworoom"
 ARM = "stock"
 TRAIN_SEEDS = (42, 43, 44)
