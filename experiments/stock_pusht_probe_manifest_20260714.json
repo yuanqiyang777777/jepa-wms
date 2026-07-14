@@ -1,0 +1,12 @@
+{
+  "tasks": {
+    "pusht": {
+      "dataset": "/home/ps/Code/yqy/DINO-WM/stablewm_home/datasets/pusht_expert_train.h5",
+      "models": {
+        "stock_seed42": "/home/ps/Code/yqy/DINO-WM/stablewm_home/checkpoints/stock_lewm_pusht_matched3_seed42_20260615/weights_epoch_10.pt",
+        "stock_seed43": "/home/ps/Code/yqy/DINO-WM/stablewm_home/checkpoints/stock_lewm_pusht_matched3_seed43_20260615/weights_epoch_10.pt",
+        "stock_seed44": "/home/ps/Code/yqy/DINO-WM/stablewm_home/checkpoints/stock_lewm_pusht_matched3_seed44_20260615/weights_epoch_10.pt"
+      }
+    }
+  }
+}
