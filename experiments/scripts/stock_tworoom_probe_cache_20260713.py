@@ -35,7 +35,7 @@ from typing import Any, Iterable
 import numpy as np
 
 
-RUN_ID = "stock_tworoom_probe_20260713_retry1"
+RUN_ID = "stock_tworoom_probe_20260713_retry2"
 TASK = "tworoom"
 ARM = "stock"
 TRAIN_SEEDS = (42, 43, 44)
@@ -527,7 +527,7 @@ def _prepared_eval_rows(
     ]
     if any(len(values) != 50 for values in arrays):
         raise ValueError(
-            f"prepared true-stock pair must contain 50 episodes: "
+            f"prepared true-stock pair must contain 50 evaluation starts: "
             f"train={train_seed} eval={eval_seed}"
         )
     return [
@@ -778,6 +778,7 @@ def _assert_probe_partition(
     dataset: Path,
     sample_indices: np.ndarray,
     exclude_episodes: set[int],
+    eval_episodes: np.ndarray,
 ) -> None:
     import h5py
 
@@ -786,8 +787,15 @@ def _assert_probe_partition(
         raise ValueError(
             f"probe fit must use exactly {PROBE_TRAIN_SAMPLES} unique rows, got {indices.shape}"
         )
-    if len(exclude_episodes) != 50:
-        raise ValueError(f"planning exclusion set must contain 50 unique episodes, got {len(exclude_episodes)}")
+    eval_episode_ids = np.asarray(eval_episodes, dtype=np.int64)
+    if eval_episode_ids.shape != (50,):
+        raise ValueError(
+            "planning evaluation identity must contain exactly 50 ordered starts, "
+            f"got {eval_episode_ids.shape}"
+        )
+    expected_exclusions = {int(value) for value in eval_episode_ids.tolist()}
+    if exclude_episodes != expected_exclusions:
+        raise ValueError("planning exclusion set differs from the prepared evaluation episodes")
     with h5py.File(dataset, "r") as handle:
         n_rows = int(handle["ep_idx"].shape[0])
         if int(indices.min()) < 0 or int(indices.max()) >= n_rows:
@@ -991,7 +999,12 @@ def fit_cache(args: argparse.Namespace) -> dict[str, Any]:
                 n_train=PROBE_TRAIN_SAMPLES,
                 seed=effective_seed,
             )
-            _assert_probe_partition(dataset, sample_indices, exclude_episodes)
+            _assert_probe_partition(
+                dataset,
+                sample_indices,
+                exclude_episodes,
+                prepared["eval_episodes"],
+            )
             val_mask = _val_mask(len(sample_indices), effective_seed)
 
             for family in ("s0", "s1"):

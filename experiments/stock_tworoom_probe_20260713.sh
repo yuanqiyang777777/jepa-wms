@@ -6,7 +6,7 @@ umask 077
 # Immutable experiment identity.
 BASE=/home/ps/Code/yqy/DINO-WM/stablewm_home
 CODE=/home/ps/Code/yqy/DINO-WM
-RUN_ID=stock_tworoom_probe_20260713_retry1
+RUN_ID=stock_tworoom_probe_20260713_retry2
 ROOT="$BASE/$RUN_ID"
 SOURCE_JEPA="$CODE/jepa-wms"
 SOURCE_STABLE="$CODE/stable-worldmodel"
@@ -34,7 +34,7 @@ EXPECTED_MANIFEST=ffffb1ae170ec45db59a7b155890ef868e145a30e112a580e99bfc14bf4987
 EXPECTED_ENV_SOURCE=5e1d392de5b02472062dbe872aded67fd465fcc8f7eaa1c02a753b2fc31c61f0
 EXPECTED_BASELINE_SHA256=474065cefd579152dc670cbcc5896d7d97790b887e1ee93946c3d2bfd48c0640
 # Review identity only.  The analyzer is local-only and is never copied to lab01.
-EXPECTED_ANALYZER_SHA256=0fb5063db36d7439fc92004fbc9f60c29e98b00da00691ab72c66ba8a5d03320
+EXPECTED_ANALYZER_SHA256=ead6bed04ff118bc3d1658b448ff2773b697dee16d3abbacf4be4042d3f6b7fb
 
 DATASET="$BASE/datasets/tworoom.h5"
 CELLS=(
